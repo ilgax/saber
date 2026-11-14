@@ -10,6 +10,7 @@ import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/grader_service.dart';
 import 'package:saber/grading/ink/coordinate_mapper.dart';
 import 'package:saber/grading/key/key_page_detector.dart';
+import 'package:saber/grading/layout/text_extractor.dart';
 import 'package:saber/grading/models.dart';
 import 'package:saber/grading/report.dart';
 import 'package:saber/grading/sidecar_store.dart';
@@ -360,12 +361,25 @@ class GradeController extends ChangeNotifier {
       );
     }
     final n = out.analysis.questionsByPage[pageIndex]?.length ?? 0;
+    final footer = out.analysis.footerKeyPages.contains(pageIndex)
+        ? KeyPageDetector.footerKey(pageIndex, page.text)
+        : null;
+    final mapper = PageMapper(
+      pdfSize: page.text.pdfSize,
+      noteSize: page.noteSize,
+    );
     return PageDebug(
       badge: !page.text.hasText
           ? '$label: no text layer'
-          : '$label: $n question${n == 1 ? '' : 's'}',
+          : '$label: $n question${n == 1 ? '' : 's'}'
+                '${footer == null ? '' : ', key line'}'
+                '${page.text.source == TextSource.ocr ? ' (OCR)' : ''}',
       isKey: false,
-      keyEntries: const [],
+      keyEntries: [
+        for (final e in footer?.entries ?? const <KeyEntry>[])
+          if (e.rect != null)
+            (rect: mapper.rectToNote(e.rect!), text: '${e.number}=${e.letter}'),
+      ],
     );
   }
 

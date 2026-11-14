@@ -74,8 +74,8 @@ class ResultsSheet extends StatelessWidget {
                 child: Text(
                   [
                     for (var i = 0; i < detection.blocks.length; i++)
-                      'Key block ${i + 1}: pages '
-                          '${detection.blocks[i].firstKeyPage + 1}-${detection.blocks[i].lastKeyPage + 1}, '
+                      'Key block ${i + 1}: '
+                          '${detection.blocks[i].samePage ? 'key line on page ${detection.blocks[i].firstKeyPage + 1}' : 'pages ${detection.blocks[i].firstKeyPage + 1}-${detection.blocks[i].lastKeyPage + 1}'}, '
                           '${detection.blocks[i].answers.length} entries',
                   ].join('\n'),
                   style: theme.textTheme.bodySmall,

@@ -4,8 +4,14 @@ import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/components/canvas/image/editor_image.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/grading/grader.dart';
+import 'package:saber/grading/ink/coordinate_mapper.dart';
+import 'package:saber/grading/ink/pdf_annotations.dart';
 import 'package:saber/grading/layout/text_extractor.dart';
 import 'package:saber/grading/models.dart';
+import 'package:saber/grading/ocr/mlkit_ocr_engine.dart';
+import 'package:saber/grading/ocr/ocr_engine.dart';
+import 'package:saber/grading/ocr/ocr_store.dart';
+import 'package:saber/grading/ocr/page_ocr.dart';
 import 'package:saber/grading/sidecar_store.dart';
 
 /// Converts a Saber [Stroke] to the plain geometry the grader works on. The
@@ -39,8 +45,26 @@ class PdfPageRef {
 /// grader that knows about [EditorPage], [PdfEditorImage] and [Stroke];
 /// everything else takes plain data (see [gradeDocument]).
 class GraderService {
+  /// [ocr] defaults to ML Kit (available on Android and iOS only); with
+  /// [ocrStore] null OCR results are cached in memory and in the app support
+  /// directory.
+  new({OcrEngine? ocr, Future<OcrStore?> Function()? ocrStore})
+    : _ocr = OcrReader(
+        ocr ?? MlKitOcrEngine(),
+        store: ocrStore ?? () => OcrStore.appDefault(),
+      );
+
   final _extractor = TextExtractor();
+  final OcrReader _ocr;
   final _hashes = <String, Future<String>>{};
+
+  Future<String> _hashOf(PdfEditorImage image, String key) =>
+      _hashes.putIfAbsent(key, () {
+        final bytes = image.pdfBytes;
+        return bytes != null
+            ? SidecarStore.hashBytes(bytes)
+            : SidecarStore.hashFile(image.pdfFile!.path);
+      });
 
   /// The pages of [pages] that show a PDF page, in note order.
   static List<PdfPageRef> pdfPages(List<EditorPage> pages) => [
@@ -75,22 +99,49 @@ class GraderService {
       if (image.pdfPage < 0 || image.pdfPage >= document.pages.length) {
         continue;
       }
-      final text = await _extractor.extract(
+      var text = await _extractor.extract(
         document.pages[image.pdfPage],
         documentKey: documentKey,
       );
+      // After the extraction the page is loaded (size and rotation are real).
+      final pdfPage = document.pages[image.pdfPage];
+      var ocrStatus = OcrStatus.notNeeded;
+      if (textLayerNeedsOcr(text)) {
+        String? hash;
+        try {
+          hash = await _hashOf(image, documentKey);
+        } catch (_) {
+          _hashes.remove(documentKey);
+        }
+        final read = await _ocr.read(
+          pdfPage,
+          documentKey: documentKey,
+          hash: hash,
+        );
+        ocrStatus = read.status;
+        text = read.text ?? text;
+      }
+      // Ink drawn into the PDF itself by another app (annotations), graded
+      // together with the note's own strokes.
+      final mapper = PageMapper(pdfSize: text.pdfSize, noteSize: page.size);
+      final pdfInk = [
+        for (final a in await readPdfAnnotations(pdfPage))
+          ...annotationToStrokes(a, mapper),
+      ];
       gradingPages.add(
         GradingPage(
           pageIndex: i,
           text: text,
           noteSize: page.size,
-          strokes: [for (final s in page.strokes) strokeToInk(s)],
+          strokes: [for (final s in page.strokes) strokeToInk(s), ...pdfInk],
+          ocrStatus: ocrStatus,
         ),
       );
       onProgress?.call(n + 1, refs.length);
       // Let the UI breathe between pages.
       await Future<void>.delayed(Duration.zero);
     }
+    await _ocr.flush();
     return gradingPages;
   }
 
@@ -107,14 +158,8 @@ class GraderService {
       if (image is! PdfEditorImage) continue;
       final key = image.pdfFile?.path ?? 'inline_pdf_${image.id}.pdf';
       if (!seen.add(key)) continue;
-      final hash = _hashes.putIfAbsent(key, () {
-        final bytes = image.pdfBytes;
-        return bytes != null
-            ? SidecarStore.hashBytes(bytes)
-            : SidecarStore.hashFile(image.pdfFile!.path);
-      });
       try {
-        final h = await hash;
+        final h = await _hashOf(image, key);
         if (!hashes.contains(h)) hashes.add(h);
       } catch (_) {
         _hashes.remove(key);
@@ -136,6 +181,7 @@ class GraderService {
   /// Forget the cached page texts (e.g. when a note is closed).
   void clearCache() {
     _extractor.clear();
+    _ocr.clear();
     _hashes.clear();
   }
 }

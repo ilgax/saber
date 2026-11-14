@@ -337,19 +337,20 @@ class DebugPainter extends CustomPainter {
           Paint()..color = _amber.withValues(alpha: 0.1),
         )
         ..drawRect(Offset.zero & size, stroke(_amber, 5));
-      for (final e in debug.keyEntries) {
-        final r = e.rect.inflate(2);
-        canvas.drawRect(r, stroke(const Color(0xFF6A1B9A)));
-        _paintText(
-          canvas,
-          e.text,
-          Offset(r.right + 4, r.top),
-          color: const Color(0xFF6A1B9A),
-          size: 13,
-          bold: true,
-          background: Colors.white.withValues(alpha: 0.8),
-        );
-      }
+    }
+    // Key entries of a key page, or of the key line on a question page.
+    for (final e in debug.keyEntries) {
+      final r = e.rect.inflate(2);
+      canvas.drawRect(r, stroke(const Color(0xFF6A1B9A)));
+      _paintText(
+        canvas,
+        e.text,
+        Offset(r.right + 4, r.top),
+        color: const Color(0xFF6A1B9A),
+        size: 13,
+        bold: true,
+        background: Colors.white.withValues(alpha: 0.8),
+      );
     }
 
     final ink = outcome.pages[pageIndex];

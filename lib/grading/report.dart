@@ -1,7 +1,9 @@
 import 'package:saber/grading/diagnostics.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/grading_config.dart';
+import 'package:saber/grading/layout/text_extractor.dart';
 import 'package:saber/grading/models.dart';
+import 'package:saber/grading/ocr/ocr_engine.dart';
 
 /// How long a grading run took.
 class GradingTimings {
@@ -51,26 +53,44 @@ String buildGradingReport({
     final glyphs = t.tokens.fold<int>(0, (n, x) => n + x.text.length);
     final ink = outcome.pages[p.pageIndex];
     final questions = analysis.questionsByPage[p.pageIndex] ?? const [];
+    final own = ink?.counts(fromPdf: false);
+    final pdf = ink?.counts(fromPdf: true);
+    final source = switch (t.source) {
+      TextSource.ocr => 'OCR',
+      TextSource.textLayer => 'text layer',
+    };
+    final ocrNote = switch (p.ocrStatus) {
+      OcrStatus.unavailable => ' (OCR needed but unavailable)',
+      OcrStatus.failed => ' (OCR failed)',
+      _ => '',
+    };
     b.writeln(
       '  page ${p.pageIndex + 1}: '
-      '${t.hasText ? 'text layer, $glyphs chars' : 'NO text layer'}, '
+      '${t.hasText ? '$source, $glyphs chars' : 'NO text layer'}$ocrNote, '
       '${t.pdfSize.width.toStringAsFixed(0)} x ${t.pdfSize.height.toStringAsFixed(0)} pt, '
       'rotation ${t.rotation}, '
-      '${keyPages.contains(p.pageIndex) ? 'KEY PAGE' : '${questions.length} question(s)'}, '
-      'strokes ${p.strokes.length} '
-      '(gradable ${ink?.gradable ?? 0}, ignored ${ink?.ignored ?? 0}, '
-      'unassigned ${ink?.unassigned ?? 0})',
+      '${keyPages.contains(p.pageIndex) ? 'KEY PAGE' : '${questions.length} question(s)'}'
+      '${analysis.footerKeyPages.contains(p.pageIndex) ? ' + key line' : ''}, '
+      'strokes ${own?.total ?? 0} '
+      '(gradable ${own?.gradable ?? 0}, ignored ${own?.ignored ?? 0}, '
+      'unassigned ${own?.unassigned ?? 0})'
+      '${pdf == null || pdf.total == 0 ? '' : ' + pdf ink ${pdf.total} (gradable ${pdf.gradable}, ignored ${pdf.ignored}, unassigned ${pdf.unassigned})'}',
     );
   }
   final kinds = <InkKind, int>{};
+  final pdfKinds = <InkKind, int>{};
   for (final ink in outcome.pages.values) {
-    for (final c in ink.classes) {
-      kinds[c.kind] = (kinds[c.kind] ?? 0) + 1;
+    for (var i = 0; i < ink.classes.length; i++) {
+      final target = ink.strokes[i].fromPdf ? pdfKinds : kinds;
+      final k = ink.classes[i].kind;
+      target[k] = (target[k] ?? 0) + 1;
     }
   }
-  b.writeln(
-    '  stroke kinds: ${kinds.isEmpty ? 'none' : [for (final e in kinds.entries) '${e.key.name} ${e.value}'].join(', ')}',
-  );
+  String kindList(Map<InkKind, int> m) => m.isEmpty
+      ? 'none'
+      : [for (final e in m.entries) '${e.key.name} ${e.value}'].join(', ');
+  b.writeln('  stroke kinds: ${kindList(kinds)}');
+  b.writeln('  pdf ink kinds: ${kindList(pdfKinds)}');
 
   b.writeln();
   b.writeln(
