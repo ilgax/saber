@@ -2,11 +2,9 @@
 // pages, real strokes, the real isolate runner and a sidecar store in a temp
 // directory.
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saber/components/canvas/image/editor_image.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/flavor_config.dart';
@@ -15,6 +13,7 @@ import 'package:saber/grading/models.dart';
 import 'package:saber/grading/sidecar_store.dart';
 import 'package:saber/grading/ui/grade_controller.dart';
 
+import 'fixtures/note_fixture.dart';
 import 'fixtures/pdf_fixtures.dart';
 import 'fixtures/stroke_fixtures.dart';
 
@@ -26,53 +25,6 @@ List<FxPage> twentyQuestionPdf() => [
     questionPage(questions(first: 1 + 4 * p, count: 4)),
   keyPage(key20.split('')),
 ];
-
-class NoteFixture {
-  new(this.doc, this.bytes, this.coreInfo);
-
-  final FxDoc doc;
-  final Uint8List bytes;
-  final EditorCoreInfo coreInfo;
-
-  static Future<NoteFixture> create(
-    List<FxPage> pdf, {
-    String path = '/n.sbn2',
-    Uint8List? sameBytes,
-  }) async {
-    final doc = await FxDoc.open(pdf);
-    final bytes = sameBytes ?? await buildPdf(pdf);
-    final coreInfo = EditorCoreInfo(filePath: path);
-    for (var i = 0; i < doc.texts.length; i++) {
-      coreInfo.pages.add(
-        EditorPage(
-          size: doc.noteSize(i),
-          backgroundImage: PdfEditorImage(
-            id: coreInfo.nextImageId++,
-            assetCache: coreInfo.assetCache,
-            pdfBytes: bytes,
-            pdfFile: null,
-            pdfPage: i,
-            pageIndex: i,
-            pageSize: doc.noteSize(i),
-            naturalSize: doc.texts[i].pdfSize,
-            onMoveImage: null,
-            onDeleteImage: null,
-            onMiscChange: null,
-          ),
-        ),
-      );
-    }
-    return NoteFixture(doc, bytes, coreInfo);
-  }
-
-  void circle(int page, int q, String letter) => coreInfo.pages[page].strokes
-      .add(stroke(circleAround(doc.labelRect(page, q, letter))));
-
-  void dispose() {
-    coreInfo.assetCache.dispose();
-    doc.dispose();
-  }
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
