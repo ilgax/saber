@@ -48,6 +48,7 @@ import 'package:saber/data/tools/pen.dart';
 import 'package:saber/data/tools/pencil.dart';
 import 'package:saber/data/tools/select.dart';
 import 'package:saber/data/tools/shape_pen.dart';
+import 'package:saber/grading/ui/grade_button.dart';
 import 'package:saber/i18n/strings.g.dart';
 import 'package:saber/pages/home/whiteboard.dart';
 import 'package:sbn/change.dart';
@@ -1747,6 +1748,7 @@ class EditorState extends State<Editor> {
                   triggerSave: saveToFile,
                 ),
                 actions: [
+                  GradeButton(coreInfo: coreInfo),
                   IconButton(
                     icon: const AdaptiveIcon(
                       icon: Icons.insert_page_break,

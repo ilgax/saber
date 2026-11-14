@@ -9,6 +9,7 @@ import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/pen.dart';
 import 'package:saber/data/tools/select.dart';
+import 'package:saber/grading/ui/grade_marks_overlay.dart';
 import 'package:sbn/tool_id.dart';
 
 class Canvas extends StatelessWidget {
@@ -128,7 +129,7 @@ class Canvas extends StatelessWidget {
                       setAsBackground: setAsBackground,
                       currentToolIsSelect: currentTool.toolId == ToolId.select,
                       currentScale: currentScale,
-                    ),
+                    ).withGradeMarks(coreInfo: coreInfo, pageIndex: pageIndex),
                   ),
                 )
               : SizedBox(width: page.size.width, height: page.size.height),

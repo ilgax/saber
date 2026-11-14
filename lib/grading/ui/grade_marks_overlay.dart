@@ -41,6 +41,21 @@ class GradeMarksOverlay extends StatelessWidget {
   }
 }
 
+/// Puts the marks overlay of a page above [this] (the page's canvas) in a
+/// [Stack]. Used as `InnerCanvas(...).withGradeMarks(...)` in `canvas.dart`,
+/// so that upstream's code stays as it was apart from this one call.
+extension GradeMarksOnCanvas on Widget {
+  Widget withGradeMarks({
+    required EditorCoreInfo coreInfo,
+    required int pageIndex,
+  }) => Stack(
+    children: [
+      this,
+      GradeMarksOverlay(coreInfo: coreInfo, pageIndex: pageIndex),
+    ],
+  );
+}
+
 /// Devices that may tap a mark. Not the stylus.
 const markTapDevices = {PointerDeviceKind.touch, PointerDeviceKind.mouse};
 
