@@ -49,10 +49,11 @@ class PageText {
     required this.pdfSize,
     required this.fullText,
     required this.charRects,
+    this.rotation = 0,
   }) : assert(fullText.length == charRects.length);
 
   /// A page without a text layer.
-  new empty({required this.pageIndex, required this.pdfSize})
+  new empty({required this.pageIndex, required this.pdfSize, this.rotation = 0})
     : fullText = '',
       charRects = const [];
 
@@ -65,6 +66,10 @@ class PageText {
 
   /// One rect per UTF-16 unit of [fullText].
   final List<Rect> charRects;
+
+  /// The page's rotation in degrees (0, 90, 180, 270); already applied to
+  /// every rect.
+  final int rotation;
 
   bool get hasText => tokens.isNotEmpty;
 
@@ -207,12 +212,17 @@ Future<PageText> extractPageText(PdfPage page) async {
   final pageIndex = page.pageNumber - 1;
   final raw = await page.loadText();
   if (raw == null || raw.fullText.isEmpty) {
-    return PageText.empty(pageIndex: pageIndex, pdfSize: size);
+    return PageText.empty(
+      pageIndex: pageIndex,
+      pdfSize: size,
+      rotation: page.rotation.index * 90,
+    );
   }
   final rotation = page.rotation.index;
   return PageText(
     pageIndex: pageIndex,
     pdfSize: size,
+    rotation: rotation * 90,
     fullText: raw.fullText,
     charRects: [
       for (final r in raw.charRects)

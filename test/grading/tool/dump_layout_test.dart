@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:saber/grading/diagnostics.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/ink/coordinate_mapper.dart';
 import 'package:saber/grading/key/key_page_detector.dart';
@@ -203,65 +204,13 @@ String _report({
 
   b.writeln();
   b.writeln('SUSPICIOUS:');
-  var suspicious = 0;
-  void flag(String s) {
-    suspicious++;
-    b.writeln('  - $s');
+  final findings = suspiciousFindings(analysis, {
+    for (var i = 0; i < texts.length; i++) i: texts[i],
+  });
+  for (final f in findings) {
+    b.writeln('  - $f');
   }
-
-  for (var t = 0; t < analysis.tests.length; t++) {
-    final qs = analysis.tests[t];
-    final numbers = {for (final q in qs) q.number}.toList()..sort();
-    final missing = <int>[
-      for (var n = numbers.first; n <= numbers.last; n++)
-        if (!numbers.contains(n)) n,
-    ];
-    if (missing.isNotEmpty) {
-      flag('test ${t + 1}: gaps in numbering, missing ${missing.join(', ')}');
-    }
-    if (numbers.first != 1)
-      flag('test ${t + 1}: numbering starts at ${numbers.first}, not 1');
-    for (final q in qs.where((q) => q.options.length < 4)) {
-      flag(
-        'test ${t + 1} #${q.number} (page ${q.pageIndex + 1}): only '
-        '${q.options.length} option(s): ${q.options.map((o) => o.letter).join()}',
-      );
-    }
-    // Compare with the key block of the same index, paired or not.
-    if (t < detection.blocks.length) {
-      final answers = detection.blocks[t].answers;
-      final qn = numbers.toSet();
-      final noQuestion = answers.keys.where((n) => !qn.contains(n)).toList()
-        ..sort();
-      final noKey = numbers.where((n) => !answers.containsKey(n)).toList();
-      if (noQuestion.isNotEmpty) {
-        flag(
-          'key block ${t + 1}: entries with no located question: ${noQuestion.join(', ')}',
-        );
-      }
-      if (noKey.isNotEmpty) {
-        flag('test ${t + 1}: questions with no key entry: ${noKey.join(', ')}');
-      }
-      for (final q in qs) {
-        final a = answers[q.number];
-        if (a != null && q.option(a) == null) {
-          flag(
-            'test ${t + 1} #${q.number}: key says $a but no such option was located',
-          );
-        }
-      }
-    }
-  }
-  for (var i = 0; i < texts.length; i++) {
-    if (texts[i].hasText &&
-        !keyPages.contains(i) &&
-        (analysis.questionsByPage[i] ?? const []).isEmpty) {
-      flag(
-        'page ${i + 1} has a text layer but no questions and is not a key page',
-      );
-    }
-  }
-  if (suspicious == 0) b.writeln('  nothing');
+  if (findings.isEmpty) b.writeln('  nothing');
   return b.toString();
 }
 
