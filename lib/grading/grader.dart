@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:saber/grading/compare/answer_comparer.dart';
+import 'package:saber/grading/corrections.dart';
 import 'package:saber/grading/grading_config.dart';
 import 'package:saber/grading/ink/coordinate_mapper.dart';
 import 'package:saber/grading/ink/ink_matcher.dart';
@@ -149,38 +150,151 @@ DocumentAnalysis analyzeDocument(
   );
 }
 
+/// What was read for one question, with the evidence.
+class QuestionOutcome {
+  const new({
+    required this.question,
+    required this.detail,
+    required this.signature,
+    required this.strokeCount,
+    required this.corrected,
+  });
+
+  /// The question in note coordinates.
+  final Question question;
+  final ReadDetail detail;
+
+  /// Fingerprint of the ink assigned to the question.
+  final InkSignature signature;
+  final int strokeCount;
+
+  /// A stored correction was applied to this question.
+  final bool corrected;
+}
+
+/// Ink statistics of one page.
+class PageInk {
+  const new({
+    required this.strokes,
+    required this.classes,
+    required this.questions,
+  });
+
+  /// The page's strokes (note coordinates).
+  final List<InkStroke> strokes;
+
+  /// One per stroke: the question it was assigned to and what it was.
+  final List<StrokeClassification> classes;
+
+  /// The page's questions in note coordinates, in the order the
+  /// classifications' question indices refer to.
+  final List<Question> questions;
+
+  int get gradable => strokes
+      .where((s) => GradingConfig.gradableTools.contains(s.toolId))
+      .length;
+  int get ignored => strokes.length - gradable;
+  int get unassigned => classes
+      .asMap()
+      .entries
+      .where(
+        (e) =>
+            e.value.questionIndex == null &&
+            GradingConfig.gradableTools.contains(strokes[e.key].toolId),
+      )
+      .length;
+}
+
+/// Everything [gradeDetailed] computed.
+class GradingOutcome {
+  const new({
+    required this.analysis,
+    required this.result,
+    required this.questions,
+    required this.pages,
+  });
+
+  final DocumentAnalysis analysis;
+  final GradeResult result;
+  final Map<QuestionId, QuestionOutcome> questions;
+
+  /// Per note page index.
+  final Map<int, PageInk> pages;
+}
+
 /// Grades a document: locates the key and the questions, reads the ink, and
 /// compares. Pure and synchronous.
 ///
 /// [keyOverride] states which pages are the key (the user's decision); the
 /// automatic detection is skipped then.
-GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
+GradeResult gradeDocument(
+  List<GradingPage> pages, {
+  KeyOverride? keyOverride,
+  List<Correction> corrections = const [],
+}) => gradeDetailed(
+  pages,
+  keyOverride: keyOverride,
+  corrections: corrections,
+).result;
+
+/// Like [gradeDocument], with the evidence behind every grade. A
+/// [Correction] replaces the reading of its question only when the ink
+/// assigned to the question still matches the correction's signature.
+GradingOutcome gradeDetailed(
+  List<GradingPage> pages, {
+  KeyOverride? keyOverride,
+  List<Correction> corrections = const [],
+}) {
   final sorted = [...pages]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
   final analysis = analyzeDocument(pages, keyOverride: keyOverride);
   final detection = analysis.detection;
   final blocks = analysis.pairedBlocks;
   final paired = blocks != null;
+  final byId = {for (final c in corrections) c.id: c};
 
   final grades = <QuestionGrade>[];
+  final outcomes = <QuestionId, QuestionOutcome>{};
+  final pageInk = <int, PageInk>{};
   for (final page in sorted) {
-    final questions = analysis.questionsByPage[page.pageIndex];
-    if (questions == null || questions.isEmpty) continue;
+    final questions = analysis.questionsByPage[page.pageIndex] ?? const [];
     final mapper = PageMapper(
       pdfSize: page.text.pdfSize,
       noteSize: page.noteSize,
     );
     final inNote = [for (final q in questions) q.mapRects(mapper.rectToNote)];
-    final readings = InkMatcher.readAll(inNote, page.strokes);
+    final ink = InkMatcher.analyzePage(inNote, page.strokes);
+    pageInk[page.pageIndex] = PageInk(
+      strokes: page.strokes,
+      classes: ink.classes,
+      questions: inNote,
+    );
     for (var i = 0; i < inNote.length; i++) {
       final q = inNote[i];
       final block = blocks != null && q.testIndex < blocks.length
           ? blocks[q.testIndex]
           : null;
-      grades.add(_grade(q, readings[i], block));
+      final signature = InkSignature.of(ink.assigned[i]);
+      var reading = ink.details[i].reading;
+      final c = byId[(q.testIndex, q.number)];
+      final corrected =
+          c != null &&
+          q.option(c.letter) != null &&
+          c.signature.matches(signature);
+      if (corrected) {
+        reading = MarkReading.marked(c.letter, confidence: Confidence.high);
+      }
+      grades.add(_grade(q, reading, block, corrected: corrected));
+      outcomes[(q.testIndex, q.number)] = QuestionOutcome(
+        question: q,
+        detail: ink.details[i],
+        signature: signature,
+        strokeCount: ink.assigned[i].length,
+        corrected: corrected,
+      );
     }
   }
 
-  return GradeResult(
+  final result = GradeResult(
     keyStatus:
         (analysis.tests.isEmpty ? detection.status == KeyStatus.found : paired)
         ? KeyStatus.found
@@ -193,6 +307,12 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
           )
         : detection,
     grades: grades,
+  );
+  return GradingOutcome(
+    analysis: analysis,
+    result: result,
+    questions: outcomes,
+    pages: pageInk,
   );
 }
 
@@ -256,7 +376,12 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
   return (result, null);
 }
 
-QuestionGrade _grade(Question q, MarkReading reading, KeyBlock? block) {
+QuestionGrade _grade(
+  Question q,
+  MarkReading reading,
+  KeyBlock? block, {
+  bool corrected = false,
+}) {
   final keyAnswer = block?.answers[q.number];
   QuestionGrade make(Verdict verdict, {UnsureReason? reason}) => QuestionGrade(
     testIndex: q.testIndex,
@@ -267,6 +392,8 @@ QuestionGrade _grade(Question q, MarkReading reading, KeyBlock? block) {
     verdict: verdict,
     reason: reason,
     confidence: reading.confidence,
+    readKind: reading.kind,
+    corrected: corrected,
     anchorInNote: q.numberRect,
   );
 

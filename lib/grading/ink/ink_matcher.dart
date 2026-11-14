@@ -178,27 +178,39 @@ abstract final class InkMatcher {
     return ReadDetail(reading, kinds, marks, crossed: crossed);
   }
 
+  /// Assigns, reads and classifies a whole page in one go.
+  static PageInkAnalysis analyzePage(
+    List<Question> questions,
+    List<InkStroke> strokes,
+  ) {
+    final assigned = assign(questions, strokes);
+    final details = [
+      for (var q = 0; q < questions.length; q++)
+        analyze(questions[q], assigned[q]),
+    ];
+    final classes = [
+      for (final _ in strokes)
+        const StrokeClassification(null, InkKind.ignored),
+    ];
+    final index = {for (var i = 0; i < strokes.length; i++) strokes[i]: i};
+    for (var q = 0; q < questions.length; q++) {
+      for (var i = 0; i < assigned[q].length; i++) {
+        classes[index[assigned[q][i]]!] = StrokeClassification(
+          q,
+          details[q].kinds[i],
+        );
+      }
+    }
+    return PageInkAnalysis(assigned, details, classes);
+  }
+
   /// What every stroke of a page was taken for, for diagnostics: which
   /// question it was assigned to (null if none) and its [InkKind]. Parallel
   /// to [strokes].
   static List<StrokeClassification> classify(
     List<Question> questions,
     List<InkStroke> strokes,
-  ) {
-    final assigned = assign(questions, strokes);
-    final result = [
-      for (final _ in strokes)
-        const StrokeClassification(null, InkKind.ignored),
-    ];
-    for (var q = 0; q < questions.length; q++) {
-      final detail = analyze(questions[q], assigned[q]);
-      for (var i = 0; i < assigned[q].length; i++) {
-        final original = strokes.indexOf(assigned[q][i]);
-        result[original] = StrokeClassification(q, detail.kinds[i]);
-      }
-    }
-    return result;
-  }
+  ) => analyzePage(questions, strokes).classes;
 
   // ---------------------------------------------------------------- lines
 
@@ -357,6 +369,20 @@ class ReadDetail {
 
   /// Letters of options that were crossed out.
   final Set<String> crossed;
+}
+
+/// The result of [InkMatcher.analyzePage].
+class PageInkAnalysis {
+  const new(this.assigned, this.details, this.classes);
+
+  /// Strokes assigned to each question.
+  final List<List<InkStroke>> assigned;
+
+  /// The reading of each question.
+  final List<ReadDetail> details;
+
+  /// One per input stroke.
+  final List<StrokeClassification> classes;
 }
 
 /// Where a stroke went and what it was taken for.

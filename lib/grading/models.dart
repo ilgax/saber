@@ -362,11 +362,19 @@ class QuestionGrade {
     this.detectedLetter,
     this.keyAnswer,
     this.reason,
+    this.readKind,
+    this.corrected = false,
   });
 
   final int testIndex;
   final int number;
   final int pageIndex;
+
+  /// The kind of ink the reading is based on (null if none or corrected).
+  final InkKind? readKind;
+
+  /// True when [detectedLetter] was set by the user, not read from the ink.
+  final bool corrected;
 
   /// The option the student marked, when one was read.
   final String? detectedLetter;
@@ -392,6 +400,8 @@ class QuestionGrade {
       other.keyAnswer == keyAnswer &&
       other.verdict == verdict &&
       other.reason == reason &&
+      other.readKind == readKind &&
+      other.corrected == corrected &&
       other.confidence == confidence &&
       other.anchorInNote == anchorInNote;
 
@@ -404,6 +414,8 @@ class QuestionGrade {
     keyAnswer,
     verdict,
     reason,
+    readKind,
+    corrected,
     confidence,
     anchorInNote,
   );
