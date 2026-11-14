@@ -77,9 +77,34 @@ DocumentAnalysis analyzeDocument(
   // numbering restarts at 1 for each test.
   final located = <int, List<Question>>{};
   final tests = <List<Question>>[];
-  int? previous;
   PageLayout? previousLayout;
   int? previousPage;
+  final explicit = [
+    for (final b in detection.blocks)
+      if (keyOverride != null && keyOverride.blocks.isNotEmpty) b,
+  ];
+  final byRange =
+      explicit.isNotEmpty && explicit.every((b) => b.firstQuestionPage != null);
+  int? previous;
+
+  /// The test a question on [page] with [number] belongs to.
+  int testFor(int page, int number) {
+    if (byRange) {
+      for (var i = 0; i < explicit.length; i++) {
+        if (page >= explicit[i].firstQuestionPage! &&
+            page <= explicit[i].lastQuestionPage!) {
+          return i;
+        }
+      }
+      // Outside every range: its own (key-less) test.
+      return explicit.length;
+    }
+    if (previous == null || (number == 1 && previous >= 1)) {
+      if (previous != null || tests.isEmpty) return tests.length;
+    }
+    return tests.isEmpty ? 0 : tests.length - 1;
+  }
+
   for (final page in sorted) {
     if (keyPages.contains(page.pageIndex)) continue;
     final layout = QuestionLocator.locatePage(
@@ -98,18 +123,23 @@ DocumentAnalysis analyzeDocument(
     previousPage = page.pageIndex;
     final questions = <Question>[];
     for (final q in found) {
-      if (previous == null || (q.number == 1 && previous >= 1)) {
-        if (previous != null || tests.isEmpty) tests.add([]);
+      final t = testFor(page.pageIndex, q.number);
+      while (tests.length <= t) {
+        tests.add([]);
       }
       previous = q.number;
-      final tagged = q.withTestIndex(tests.length - 1);
-      tests.last.add(tagged);
+      final tagged = q.withTestIndex(t);
+      tests[t].add(tagged);
       questions.add(tagged);
     }
     located[page.pageIndex] = questions;
   }
+  // Ranges without any question leave empty tests behind; keep the indices
+  // (test i pairs with block i) but they hold nothing.
 
-  final (blocks, problem) = _pair(tests, detection);
+  final (blocks, problem) = byRange
+      ? _pairExplicit(tests, detection)
+      : _pair(tests, detection);
   return DocumentAnalysis(
     detection: detection,
     questionsByPage: located,
@@ -143,7 +173,9 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
     final readings = InkMatcher.readAll(inNote, page.strokes);
     for (var i = 0; i < inNote.length; i++) {
       final q = inNote[i];
-      final block = blocks?[q.testIndex];
+      final block = blocks != null && q.testIndex < blocks.length
+          ? blocks[q.testIndex]
+          : null;
       grades.add(_grade(q, readings[i], block));
     }
   }
@@ -162,6 +194,19 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
         : detection,
     grades: grades,
   );
+}
+
+/// The user named the question pages of each key block: test i is the
+/// questions of block i's range. No count or coverage checks; the user's word
+/// stands.
+(List<KeyBlock>?, String?) _pairExplicit(
+  List<List<Question>> tests,
+  KeyDetection detection,
+) {
+  if (detection.status != KeyStatus.found) {
+    return (null, 'a chosen key block has no readable entries');
+  }
+  return (detection.blocks, null);
 }
 
 /// Pairs test i with key block i (both in document order). Returns the blocks
