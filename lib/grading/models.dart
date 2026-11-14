@@ -49,6 +49,7 @@ class Question {
     required this.numberRect,
     required this.region,
     required this.options,
+    this.continuedFromPage,
   });
 
   /// Which test of the document this belongs to (numbering restarts at 1 for
@@ -62,6 +63,11 @@ class Question {
   final Rect region;
   final List<Option> options;
 
+  /// For a question split over a page break: the page holding its number and
+  /// stem. [pageIndex], [numberRect] and [region] are then those of the
+  /// options page.
+  final int? continuedFromPage;
+
   Question withTestIndex(int testIndex) => Question(
     testIndex: testIndex,
     number: number,
@@ -69,6 +75,7 @@ class Question {
     numberRect: numberRect,
     region: region,
     options: options,
+    continuedFromPage: continuedFromPage,
   );
 
   Question mapRects(Rect Function(Rect) f) => Question(
@@ -78,6 +85,7 @@ class Question {
     numberRect: f(numberRect),
     region: f(region),
     options: [for (final o in options) o.mapRects(f)],
+    continuedFromPage: continuedFromPage,
   );
 
   Option? option(String letter) {
@@ -95,6 +103,7 @@ class Question {
       other.pageIndex == pageIndex &&
       other.numberRect == numberRect &&
       other.region == region &&
+      other.continuedFromPage == continuedFromPage &&
       listEquals(other.options, options);
 
   @override
@@ -104,6 +113,7 @@ class Question {
     pageIndex,
     numberRect,
     region,
+    continuedFromPage,
     Object.hashAll(options),
   );
 

@@ -22,12 +22,12 @@ class _Label {
   final int length;
 }
 
-({String letter, int length})? _matchLabel(String text) {
+({String letter, int length, bool bare})? _matchLabel(String text) {
   var m = _parenLabel.firstMatch(text);
   m ??= _punctLabel.firstMatch(text);
-  if (m != null) return (letter: m.group(1)!, length: m.end);
+  if (m != null) return (letter: m.group(1)!, length: m.end, bare: false);
   m = _bareLabel.firstMatch(text);
-  if (m != null) return (letter: m.group(1)!, length: 1);
+  if (m != null) return (letter: m.group(1)!, length: 1, bare: true);
   return null;
 }
 
@@ -41,6 +41,50 @@ class _Draft {
   final List<TextLine> lines;
 }
 
+/// A question number and stem at the bottom of a page whose options are not
+/// on that page.
+class PendingQuestion {
+  const new({
+    required this.number,
+    required this.pageIndex,
+    required this.numberRect,
+    required this.stemRegion,
+  });
+
+  final int number;
+  final int pageIndex;
+  final Rect numberRect;
+  final Rect stemRegion;
+}
+
+/// Options at the top of a page, before its first question number.
+class LeadingOptions {
+  const new({
+    required this.pageIndex,
+    required this.options,
+    required this.region,
+    required this.anchor,
+  });
+
+  final int pageIndex;
+  final List<Option> options;
+  final Rect region;
+  final Rect anchor;
+}
+
+/// What [QuestionLocator.locatePage] found on one page.
+class PageLayout {
+  const new(this.questions, this.pending, this.leading);
+
+  final List<Question> questions;
+
+  /// The last question of the page when it has no options on this page.
+  final PendingQuestion? pending;
+
+  /// Options before the first question number of the page.
+  final LeadingOptions? leading;
+}
+
 /// Finds multiple choice questions in a page's text layer.
 abstract final class QuestionLocator {
   /// The questions of [page], column by column, top to bottom. Rects are in
@@ -52,17 +96,75 @@ abstract final class QuestionLocator {
   ///
   /// [pageIndex] is stored in the questions (the note's page index); it
   /// defaults to the page's index in its PDF.
-  static List<Question> locate(PageText page, {int? pageIndex}) {
-    if (!page.hasText) return const [];
+  static List<Question> locate(PageText page, {int? pageIndex}) =>
+      locatePage(page, pageIndex: pageIndex).questions;
+
+  /// Like [locate], plus the two loose ends that can belong to a question
+  /// split over a page break: a question whose number and stem are at the
+  /// bottom of the page but whose options are not (see [PageLayout.pending]),
+  /// and options at the top of the page before its first question number
+  /// (see [PageLayout.leading]). [continuation] joins them.
+  static PageLayout locatePage(PageText page, {int? pageIndex}) {
+    final index = pageIndex ?? page.pageIndex;
+    if (!page.hasText) return const PageLayout([], null, null);
     final questions = <Question>[];
+    PendingQuestion? pending;
+    LeadingOptions? leading;
     final columns = _splitColumns(page);
-    for (final column in columns) {
-      for (final draft in _draftQuestions(buildLines(column))) {
-        final q = _finish(draft, pageIndex ?? page.pageIndex);
-        if (q != null) questions.add(q);
+    for (var c = 0; c < columns.length; c++) {
+      final (drafts, lead) = _draftQuestions(buildLines(columns[c]));
+      if (c == 0 && lead.isNotEmpty) {
+        leading = _leading(lead, index);
+      }
+      for (var d = 0; d < drafts.length; d++) {
+        final draft = drafts[d];
+        final q = _finish(draft, index);
+        if (q != null) {
+          questions.add(q);
+        } else if (c == columns.length - 1 &&
+            d == drafts.length - 1 &&
+            _chain(draft, 1).isEmpty) {
+          pending = PendingQuestion(
+            number: draft.number,
+            pageIndex: index,
+            numberRect: draft.numberRect,
+            stemRegion: draft.lines
+                .map((l) => l.bounds)
+                .reduce((a, b) => a.expandToInclude(b)),
+          );
+        }
       }
     }
-    return questions;
+    return PageLayout(questions, pending, leading);
+  }
+
+  /// Joins a [PendingQuestion] at the bottom of one page with the
+  /// [LeadingOptions] at the top of the next. The question is placed on the
+  /// page that holds the options (so marks and ink matching work there): its
+  /// number rect is a small anchor at the left of the first option line, its
+  /// region covers the options only.
+  static Question continuation(PendingQuestion pending, LeadingOptions lead) =>
+      Question(
+        testIndex: 0,
+        number: pending.number,
+        pageIndex: lead.pageIndex,
+        numberRect: lead.anchor,
+        region: lead.region,
+        options: lead.options,
+        continuedFromPage: pending.pageIndex,
+      );
+
+  static LeadingOptions? _leading(List<TextLine> lines, int pageIndex) {
+    final draft = _Draft(0, Rect.zero, lines.first)
+      ..lines.addAll(lines.skip(1));
+    final q = _finish(draft, pageIndex, leading: true);
+    if (q == null) return null;
+    return LeadingOptions(
+      pageIndex: pageIndex,
+      options: q.options,
+      region: q.region,
+      anchor: q.numberRect,
+    );
   }
 
   /// Splits the page's tokens into columns by clustering where question
@@ -111,8 +213,10 @@ abstract final class QuestionLocator {
   }
 
   /// Groups a column's lines under the question number that precedes them.
-  static List<_Draft> _draftQuestions(List<TextLine> lines) {
+  /// Also returns the lines before the first question number.
+  static (List<_Draft>, List<TextLine>) _draftQuestions(List<TextLine> lines) {
     final drafts = <_Draft>[];
+    final leading = <TextLine>[];
     int? last;
     for (final line in lines) {
       final first = line.tokens.first;
@@ -125,9 +229,13 @@ abstract final class QuestionLocator {
           continue;
         }
       }
-      if (drafts.isNotEmpty) drafts.last.lines.add(line);
+      if (drafts.isNotEmpty) {
+        drafts.last.lines.add(line);
+      } else {
+        leading.add(line);
+      }
     }
-    return drafts;
+    return (drafts, leading);
   }
 
   static bool _acceptNumber(int n, int? last) {
@@ -136,15 +244,24 @@ abstract final class QuestionLocator {
     return n > last && n - last <= GradingConfig.maxQuestionNumberSkip;
   }
 
-  static Question? _finish(_Draft draft, int pageIndex) {
+  /// The option labels of [draft] in sequence, searching its lines from
+  /// [from] (1 skips the line holding the number).
+  ///
+  /// With [punctuated] only labels like `A)`, `(A)`, `A.` count, not a bare
+  /// letter (which is too easily the word "A" in prose).
+  static List<_Label> _chain(
+    _Draft draft,
+    int from, {
+    bool punctuated = false,
+  }) {
     final lines = draft.lines;
     final candidates = <_Label>[];
-    for (var li = 1; li < lines.length; li++) {
+    for (var li = from; li < lines.length; li++) {
       final line = lines[li];
       for (var ti = 0; ti < line.tokens.length; ti++) {
         final token = line.tokens[ti];
         final m = _matchLabel(token.text);
-        if (m == null) continue;
+        if (m == null || (punctuated && m.bare)) continue;
         if (ti > 0) {
           final gap = token.rect.left - line.tokens[ti - 1].rect.right;
           if (gap <
@@ -157,14 +274,27 @@ abstract final class QuestionLocator {
         );
       }
     }
-    final chain = _bestChain(candidates);
+    return _bestChain(candidates);
+  }
+
+  static Question? _finish(
+    _Draft draft,
+    int pageIndex, {
+    bool leading = false,
+  }) {
+    final lines = draft.lines;
+    final chain = _chain(draft, leading ? 0 : 1, punctuated: leading);
     if (chain.length < GradingConfig.minOptionsPerQuestion) return null;
 
     final chosenLines = {for (final l in chain) l.line};
     final options = <Option>[];
-    var region = draft.numberRect.expandToInclude(draft.lines.first.bounds);
-    for (var li = 1; li < chain.first.line; li++) {
-      region = region.expandToInclude(lines[li].bounds);
+    Rect? region;
+    if (!leading) {
+      var r = draft.numberRect.expandToInclude(draft.lines.first.bounds);
+      for (var li = 1; li < chain.first.line; li++) {
+        r = r.expandToInclude(lines[li].bounds);
+      }
+      region = r;
     }
     for (var ci = 0; ci < chain.length; ci++) {
       final label = chain[ci];
@@ -204,14 +334,21 @@ abstract final class QuestionLocator {
       options.add(
         Option(letter: label.letter, labelRect: label.rect, box: box),
       );
-      region = region.expandToInclude(box);
+      region = region?.expandToInclude(box) ?? box;
+    }
+    var numberRect = draft.numberRect;
+    if (leading) {
+      // No number on this page: a small anchor left of the first option line.
+      final first = lines.first.bounds;
+      final left = lines.map((l) => l.bounds.left).reduce(min);
+      numberRect = Rect.fromLTWH(left - 14, first.top, 10, first.height);
     }
     return Question(
       testIndex: 0,
       number: draft.number,
       pageIndex: pageIndex,
-      numberRect: draft.numberRect,
-      region: region,
+      numberRect: numberRect,
+      region: region!,
       options: options,
     );
   }

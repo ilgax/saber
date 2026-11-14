@@ -78,13 +78,26 @@ DocumentAnalysis analyzeDocument(
   final located = <int, List<Question>>{};
   final tests = <List<Question>>[];
   int? previous;
+  PageLayout? previousLayout;
+  int? previousPage;
   for (final page in sorted) {
     if (keyPages.contains(page.pageIndex)) continue;
-    final questions = <Question>[];
-    for (final q in QuestionLocator.locate(
+    final layout = QuestionLocator.locatePage(
       page.text,
       pageIndex: page.pageIndex,
-    )) {
+    );
+    final found = [...layout.questions];
+    // A question split over a page break: number and stem at the bottom of
+    // the previous page, options at the top of this one.
+    final pending = previousLayout?.pending;
+    final lead = layout.leading;
+    if (pending != null && lead != null && previousPage == page.pageIndex - 1) {
+      found.insert(0, QuestionLocator.continuation(pending, lead));
+    }
+    previousLayout = layout;
+    previousPage = page.pageIndex;
+    final questions = <Question>[];
+    for (final q in found) {
       if (previous == null || (q.number == 1 && previous >= 1)) {
         if (previous != null || tests.isEmpty) tests.add([]);
       }
