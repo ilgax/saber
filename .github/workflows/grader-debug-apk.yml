@@ -1,0 +1,122 @@
+# Fork-only workflow (not from upstream Saber).
+# Checks the grader (lib/grading) and builds a debug APK to sideload.
+# The APK is signed with upstream's public fallback key
+# (android/fallback-key.jks), so no secrets are needed.
+name: Grader debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grader-debug-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Run on: manual dispatch, every push to main, and pushes to other branches
+  # only when this workflow file itself changed.
+  gate:
+    name: Decide whether to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          run=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$REF" = "refs/heads/main" ]; then
+            run=true
+          elif ! git fetch --quiet --depth=1 origin "$BEFORE"; then
+            # New branch or force push: no previous commit to compare with.
+            run=true
+          elif git diff --name-only "$BEFORE" HEAD | grep -qx ".github/workflows/grader-debug-apk.yml"; then
+            run=true
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Check grader and build debug APK
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: "./.github/shared_workflows/install_apt_dependencies"
+
+      - name: Setup Flutter
+        uses: adil192/setup-flutter-submodule@v3
+        with:
+          flutter-path: submodules/flutter
+          no-save-caches: true
+
+      # Keep these values in sync with upstream's .github/workflows/android.yml.
+      - name: Setup Android build tools
+        run: |
+          ANDROID_NDK=/usr/local/lib/android/sdk/ndk/29.0.14206865
+          echo "ANDROID_NDK=$ANDROID_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK" >> $GITHUB_ENV
+
+          echo "JAVA_HOME=$JAVA_HOME_25_X64" >> $GITHUB_ENV
+
+      - name: Disable Flutter CLI animations
+        run: flutter config --no-cli-animations
+
+      # A shallow submodule clone without its tag makes Flutter report
+      # 0.0.0-unknown, and then `pub get` fails with a confusing error.
+      - name: Check the Flutter version is known
+        run: |
+          flutter --version
+          if flutter --version | grep -q "0.0.0-unknown"; then
+            echo "::error::Flutter version is unknown: the submodule's version tag was not fetched."
+            exit 1
+          fi
+
+      - run: flutter pub get
+
+      - name: Analyze grader
+        run: flutter analyze --no-pub lib/grading test/grading
+
+      - name: Test grader
+        run: flutter test --no-pub test/grading
+
+      - name: Build debug apk
+        run: flutter build apk --debug
+
+      - name: Rename apk
+        id: rename_apk
+        run: |
+          buildName=$(grep -oP "(?<=buildName = ').*(?=')" lib/data/version.dart)
+          apkName="Saber_Grader_debug_v${buildName}_${GITHUB_SHA::7}.apk"
+          echo "apkName=$apkName" >> $GITHUB_OUTPUT
+
+          mkdir -p output
+          mv build/app/outputs/flutter-apk/app-debug.apk output/$apkName
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Saber-Grader-debug-apk
+          path: output/${{ steps.rename_apk.outputs.apkName }}
+          if-no-files-found: error
