@@ -116,6 +116,9 @@ report show the numbers measured on the tablet.
 - Marks are computed when you tap Grade; ink written afterwards is not reflected
   until *Grade again*.
 - A note with several different PDFs stores the key choice by note page index.
+- OCR needs ML Kit (Android and iOS) and is unverified on a device; the F-Droid
+  style build (`patches/pre/remove_proprietary_dependencies.sh`) does not strip
+  it, see `HOOKS.md`.
 - Only questions with at least A and B located are graded; a split question
   needs punctuated labels at the top of the next page.
 - Key pages: at most one page range per block; two tests on one key page need the
@@ -123,6 +126,86 @@ report show the numbers measured on the tablet.
 - UI strings are English only.
 - The pointer-safety claims are proven in widget tests, not on the stylus; see
   the checklist.
+
+## Scanned pages, PDF ink and keys on the question page
+
+Found with a real test (a Turkish geometry question bank exported from Flexcil
+"as original PDF"): every page reported `41 chars, 0 question(s), strokes 0`.
+The text layer held only a watermark, the questions, options and the key were
+part of an image, and the answer marks were PDF annotations, not Saber
+strokes. Three additions (Android and iOS only for OCR; everything else is
+pure Dart and tested on Linux).
+
+### OCR (`lib/grading/ocr/`)
+
+- A page whose text layer has fewer than `GradingConfig.ocrMinTextLayerChars`
+  (120) non-space characters, and that yields neither a key nor a question from
+  that text, is recognized automatically; nothing asks the user. 120 sits
+  between a real page (hundreds of characters) and a watermark (41 measured).
+- The page is rendered with pdfrx with annotations **off**
+  (`PdfAnnotationRenderingMode.none`, so the user's ink is not recognized) at
+  `ocrRenderScale` (3x, 216 dpi; the small print of a footer key stays about 18
+  px high), capped at `ocrMaxPixels`, encoded as PNG off the UI isolate and
+  written to the app cache directory for the length of the call only.
+- `OcrEngine` (`ocr_engine.dart`) is the interface; `MlKitOcrEngine` uses
+  `google_mlkit_text_recognition` (Latin script, bundled model: no download, no
+  network). Elsewhere (`!Android && !iOS`, `MissingPluginException`) the engine
+  is unavailable and grading behaves as before; the report then says `(OCR
+  needed but unavailable)` on that page. Tests use a fake engine.
+- `ocrToPageText` turns words into the normal `PageText` (`source: ocr`): the
+  render is the page's visual appearance, so pixels map to PDF visual space by
+  a scale and no rotation or y-flip is needed. A character gets its symbol's box
+  when the engine reports symbols that spell the word, else an even share of
+  the word's box. The OCR text **replaces** the thin text layer (the watermark
+  is read by OCR as well, and does not disturb question location).
+- Cached per document key and page in memory for the session and on disk in
+  `<app support>/grading/ocr/<pdf sha256>.json` (`OcrStore`), so a test is
+  recognized once. Never in the report, logs or anything shared: the report
+  prints only `OCR, N chars` per page. Progress is the existing page counter of
+  the grade button (each OCR page takes a few seconds).
+- Limits: only upright, axis-aligned Latin text; ML Kit sometimes reads `1.` as
+  `l.` or `D)` as `0)`, which loses that question or option (see the suspicious
+  list); symbols' boxes are as good as ML Kit's; a handwritten or very small
+  text is not read.
+
+### PDF ink annotations as marks (`ink/pdf_annotations.dart`)
+
+- `/Ink` annotations (and Line, Polygon, PolyLine, Circle, Square, Highlight)
+  are read with the PDFium bindings of `pdfium_dart` (a direct dependency now,
+  pinned to the locked 0.4.2, with `ffi` 2.2.0, only because lints forbid
+  importing transitive packages). Access is serialised with pdfrx through
+  `PdfDocument.useNativeDocumentHandle`, which suspends pdfrx's PDFium worker
+  while the synchronous callback runs and keeps the document alive. The callback
+  opens its own page and annotation handles and closes them before returning.
+  Coordinates get the same crop-box shift and rotation as the text.
+- Each ink path becomes one `InkStroke` (`fromPdf: true`) whose outline is a
+  thin loop around the centre line (at least `annotationMinOutlineWidth`), like
+  a Saber pen outline. Annotations with /CA below `annotationMinOpacity` (0.9)
+  and the Highlight subtype are highlighter strokes and ignored; the rest count
+  as ball point pen. They are graded together with the page's Saber strokes.
+- Report: `strokes 0 (...) + pdf ink 14 (gradable 11, ignored 3, unassigned 1)`
+  and a `pdf ink kinds:` line. No coordinates. The debug overlay draws them like
+  strokes.
+- Limits: the width comes from /Border (annotations that only have /BS keep the
+  default); annotations without geometry (stamps, free text) and ink flattened
+  into the page content are not marks; hidden annotations are skipped.
+
+### Key on the question page (`KeyPageDetector.footerKey`)
+
+- If no page is a key page, lines in which at least 80% of the tokens are
+  `number sep letter` entries (a page number in the same row is fine), with a
+  run of at least `keyMinConsecutiveRun` (5) consecutive numbers on the page,
+  form a key block with `KeyBlock.samePage`. Those entry tokens are removed
+  before the questions are located, so `1. D` is never question 1 with option D.
+- Pairing: a key line belongs to the test of the questions on its page (the k-th
+  line of a page to the k-th test there; a page without questions to the closest
+  questions before it). Tests that start at 1 on every page get one key each;
+  a test over several pages merges the key lines of its pages. Separate key pages
+  keep working and win when both exist; the key pages dialog only concerns them.
+- Limits: a key line shorter than 5 entries, or in the same text row as other
+  text beside it (a second column), is not seen; use the key pages dialog (it
+  does not cover footers yet) or fix the OCR. Two different tests on one page
+  are paired by order.
 
 ## Optional: laptop dump tool
 

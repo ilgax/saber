@@ -83,3 +83,29 @@ editor app bar's `actions` and add the import. `coreInfo` is the editor's
   no i18n/slang file is touched.
 - Grading data is stored only in `<app support dir>/grading/` (see
   `PHASE2.md`), never in the notes folder and never in the note file.
+
+## Dependencies added to `pubspec.yaml` (and `pubspec.lock`)
+
+The grader adds these lines under `dependencies:` (merge conflicts there are
+trivial, keep them):
+
+- `google_mlkit_text_recognition: ^1.0.3` (locked 1.0.3, pulls in
+  `google_mlkit_commons` 1.0.3): on-device OCR, Latin script only. It needs no
+  Android edit: its `minSdk` is 21 (the app has 26), the Latin model is bundled
+  (`com.google.mlkit:text-recognition`, no Play services model download) and the
+  plugin registers itself. **F-Droid style builds**
+  (`patches/pre/remove_proprietary_dependencies.sh`) do **not** strip it: that
+  script only removes `onyxsdk_pen`. ML Kit is Google's closed library, so a
+  build that must be free of proprietary dependencies has to delete the
+  dependency, `lib/grading/ocr/mlkit_ocr_engine.dart` and the `MlKitOcrEngine`
+  import/default in `lib/grading/grader_service.dart` (pass an engine that is
+  never available instead). `patches/pre/pubspec-fdroid.lock.patch` still
+  applies (checked: only line offsets move).
+- `pdfium_dart: 0.4.2` and `ffi: 2.2.0`: already in the lock as transitive
+  dependencies of `pdfrx_engine` at exactly these versions; listed because
+  `depend_on_referenced_packages` forbids importing them otherwise. Used only by
+  `lib/grading/ink/pdf_annotations.dart`. The lock changes `transitive` to
+  `direct main` for them.
+
+Nothing else outside `lib/grading/`, `test/grading/` and the notes was edited
+for OCR, PDF ink or footer keys.
