@@ -6,17 +6,21 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:saber/grading/corrections.dart';
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/key/key_page_detector.dart';
 
 /// What is stored for one PDF.
 class SidecarData {
-  const new({this.keyOverride, this.corrections = const []});
+  const new({this.keyOverride, this.corrections = const [], this.lastRange});
 
   /// The user's key page choice, in PDF page indices.
   final KeyOverride? keyOverride;
 
   /// Corrections, oldest first.
   final List<Correction> corrections;
+
+  /// The range of note pages graded last, in note page indices.
+  final GradeRange? lastRange;
 
   static const empty = SidecarData();
 }
@@ -86,7 +90,21 @@ class SidecarStore {
           // Skip one bad entry, keep the rest.
         }
       }
-      return SidecarData(keyOverride: key, corrections: corrections);
+      GradeRange? range;
+      try {
+        final r = json['range'];
+        if (r is Map<String, dynamic>) {
+          range = GradeRange.fromJson(r);
+          if (range.from < 0 || range.to < range.from) range = null;
+        }
+      } catch (_) {
+        range = null;
+      }
+      return SidecarData(
+        keyOverride: key,
+        corrections: corrections,
+        lastRange: range,
+      );
     } catch (_) {
       return SidecarData.empty;
     }
@@ -95,7 +113,21 @@ class SidecarStore {
   /// Stores (or with null removes) the key override of [hash].
   Future<void> saveKeyOverride(String hash, KeyOverride? override) => _update(
     hash,
-    (d) => SidecarData(keyOverride: override, corrections: d.corrections),
+    (d) => SidecarData(
+      keyOverride: override,
+      corrections: d.corrections,
+      lastRange: d.lastRange,
+    ),
+  );
+
+  /// Stores the range of note pages graded last.
+  Future<void> saveLastRange(String hash, GradeRange range) => _update(
+    hash,
+    (d) => SidecarData(
+      keyOverride: d.keyOverride,
+      corrections: d.corrections,
+      lastRange: range,
+    ),
   );
 
   /// Adds or replaces the correction of its question. Keeps the newest
@@ -113,6 +145,7 @@ class SidecarStore {
         return SidecarData(
           keyOverride: d.keyOverride,
           corrections: list.sublist(start),
+          lastRange: d.lastRange,
         );
       });
 
@@ -124,6 +157,7 @@ class SidecarStore {
         for (final c in d.corrections)
           if (c.id != id) c,
       ],
+      lastRange: d.lastRange,
     ),
   );
 
@@ -146,6 +180,7 @@ class SidecarStore {
       'v': schemaVersion,
       if (data.keyOverride != null) 'key': data.keyOverride!.toJson(),
       'corr': [for (final c in data.corrections) c.toJson()],
+      if (data.lastRange != null) 'range': data.lastRange!.toJson(),
     };
     // Write a temp file and rename it, so a crash never leaves half a file.
     final tmp = File('${directory.path}/$hash.json.tmp');

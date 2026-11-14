@@ -93,13 +93,16 @@ class OcrReader {
 
   /// The OCR text of [page], or null (with the reason in the status) when
   /// there is none. [documentKey] keys the in-memory cache, [hash] (the PDF's
-  /// SHA-256, when known) the disk cache.
+  /// SHA-256, when known) the disk cache. With [cachedOnly] nothing is
+  /// rendered or recognized: a page without a cached result gives a null text
+  /// and [OcrStatus.notNeeded].
   Future<({PageText? text, OcrStatus status})> read(
     PdfPage page, {
     required String documentKey,
     String? hash,
+    bool cachedOnly = false,
   }) async {
-    if (!engine.isAvailable || _engineUnavailable) {
+    if (!cachedOnly && (!engine.isAvailable || _engineUnavailable)) {
       return (text: null, status: OcrStatus.unavailable);
     }
     final key = '$documentKey#${page.pageNumber}';
@@ -112,6 +115,9 @@ class OcrReader {
           final stored = _disk[hash] ??= await store.load(hash);
           ocr = stored[pageIndex];
         }
+      }
+      if (ocr == null && cachedOnly) {
+        return (text: null, status: OcrStatus.notNeeded);
       }
       if (ocr == null) {
         final image = await renderForOcr(page);

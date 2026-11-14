@@ -22,6 +22,7 @@ class GradingPage {
     required this.noteSize,
     required this.strokes,
     this.ocrStatus = OcrStatus.notNeeded,
+    this.inRange = true,
   });
 
   /// Index of the page in the note.
@@ -40,6 +41,11 @@ class GradingPage {
   /// Whether the text of the page came from OCR (see [PageText.source]) or
   /// why not although the text layer was too thin.
   final OcrStatus ocrStatus;
+
+  /// Whether the page is to be graded (marked). A page outside the grading
+  /// range only contributes its text, for key detection and for numbering the
+  /// tests; no marks, strokes or grades come from it.
+  final bool inRange;
 }
 
 /// What the grader found in a document before any ink is read: the key, the
@@ -299,6 +305,7 @@ GradingOutcome gradeDetailed(
   final outcomes = <QuestionId, QuestionOutcome>{};
   final pageInk = <int, PageInk>{};
   for (final page in sorted) {
+    if (!page.inRange) continue;
     final questions = analysis.questionsByPage[page.pageIndex] ?? const [];
     final mapper = PageMapper(
       pdfSize: page.text.pdfSize,
