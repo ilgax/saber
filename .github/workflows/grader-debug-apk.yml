@@ -1,7 +1,13 @@
 # Fork-only workflow (not from upstream Saber).
-# Checks the grader (lib/grading) and builds a debug APK to sideload.
-# The APK is signed with upstream's public fallback key
-# (android/fallback-key.jks), so no secrets are needed.
+# Checks the grader (lib/grading), builds a debug APK and publishes it as a
+# GitHub pre-release so it can be installed from a tablet's browser.
+#
+# Signing: every build must use the same key, or an update will not install
+# over the previous build. By default the APK is signed with the keystore that
+# is committed upstream (android/fallback-key.jks), which is fixed but public.
+# To use a private key instead, set the repository secrets SIGNING_KEY (base64
+# of the keystore), KEY_STORE_PASSWORD, KEY_PASSWORD and ALIAS. Switching keys
+# requires uninstalling the app once (export your notes first).
 name: Grader debug APK
 
 on:
@@ -52,6 +58,8 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write # to publish the pre-release
     # Only builds cancel each other; a push that skips the build must not
     # cancel a build that is still running.
     concurrency:
@@ -70,6 +78,22 @@ jobs:
         with:
           flutter-path: submodules/flutter
           no-save-caches: true
+
+      - name: Setup keystore (optional, see the top of this file)
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+        if: ${{ env.SIGNING_KEY != '' }}
+        run: |
+          echo "$SIGNING_KEY" | base64 -d > android/android.keystore
+          {
+            echo "storePassword=$KEY_STORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$ALIAS"
+            echo "storeFile=../android.keystore"
+          } > android/key.properties
 
       # Keep these values in sync with upstream's .github/workflows/android.yml.
       - name: Setup Android build tools
@@ -103,7 +127,7 @@ jobs:
         run: flutter test --no-pub test/grading
 
       - name: Build debug apk
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define=UPDATE_CHECK="false"
 
       - name: Rename apk
         id: rename_apk
@@ -115,9 +139,36 @@ jobs:
           mkdir -p output
           mv build/app/outputs/flutter-apk/app-debug.apk output/$apkName
 
+          # The signing certificate must be the same for every build.
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          certSha256=$("$apksigner" verify --print-certs output/$apkName | grep -m 1 "SHA-256" | awk '{print $NF}')
+          echo "Signing certificate SHA-256: $certSha256"
+          echo "certSha256=$certSha256" >> $GITHUB_OUTPUT
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: Saber-Grader-debug-apk
           path: output/${{ steps.rename_apk.outputs.apkName }}
           if-no-files-found: error
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: output/${{ steps.rename_apk.outputs.apkName }}
+          CERT: ${{ steps.rename_apk.outputs.certSha256 }}
+        run: |
+          tag="grader-${GITHUB_RUN_NUMBER}"
+          {
+            echo "Debug build of Saber Grader (app id dev.ilgax.saber), built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}."
+            echo
+            echo "To install: open this page on the tablet and tap the .apk file below."
+            echo
+            echo "Signing certificate SHA-256: ${CERT}"
+          } > notes.md
+          gh release create "$tag" "$APK" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Saber Grader debug build ${GITHUB_RUN_NUMBER}" \
+            --notes-file notes.md
