@@ -85,6 +85,36 @@ class KeyOverride {
   final Set<int> keyPages;
   final List<KeyBlockOverride> blocks;
 
+  /// The same decision with every page index passed through [f]. Pages that
+  /// [f] cannot map are dropped (a block whose key pages cannot be mapped is
+  /// dropped; an unmappable question range becomes "automatic"). Null if
+  /// nothing is left.
+  KeyOverride? mapPages(int? Function(int) f) {
+    if (blocks.isEmpty) {
+      final pages = {
+        for (final p in keyPages)
+          if (f(p) case final int q) q,
+      };
+      return pages.isEmpty ? null : KeyOverride(pages);
+    }
+    final mapped = <KeyBlockOverride>[];
+    for (final b in blocks) {
+      final kf = f(b.firstKeyPage), kl = f(b.lastKeyPage);
+      if (kf == null || kl == null) continue;
+      final qf = b.firstQuestionPage == null ? null : f(b.firstQuestionPage!);
+      final ql = b.lastQuestionPage == null ? null : f(b.lastQuestionPage!);
+      mapped.add(
+        KeyBlockOverride(
+          firstKeyPage: kf,
+          lastKeyPage: kl,
+          firstQuestionPage: qf != null && ql != null ? qf : null,
+          lastQuestionPage: qf != null && ql != null ? ql : null,
+        ),
+      );
+    }
+    return mapped.isEmpty ? null : KeyOverride.fromBlocks(mapped);
+  }
+
   Map<String, dynamic> toJson() => {
     'pages': (keyPages.toList()..sort()),
     if (blocks.isNotEmpty) 'blocks': [for (final b in blocks) b.toJson()],
