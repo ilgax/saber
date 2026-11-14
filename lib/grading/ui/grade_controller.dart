@@ -1,17 +1,20 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/data/version.dart';
 import 'package:saber/grading/corrections.dart';
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/grader_service.dart';
 import 'package:saber/grading/ink/coordinate_mapper.dart';
 import 'package:saber/grading/key/key_page_detector.dart';
 import 'package:saber/grading/layout/text_extractor.dart';
 import 'package:saber/grading/models.dart';
+import 'package:saber/grading/ocr/page_ocr.dart';
 import 'package:saber/grading/report.dart';
 import 'package:saber/grading/sidecar_store.dart';
 import 'package:saber/grading/ui/grading_strings.dart';
@@ -134,8 +137,19 @@ class GradeController extends ChangeNotifier {
   var doneCount = 0, totalCount = 0;
   String? error;
 
+  /// The grades of every page graded in this session (earlier ranges stay
+  /// until their pages are graded again).
   GradingOutcome? outcome;
+
+  /// Every PDF page: those graded so far ([GradingPage.inRange]) with their
+  /// strokes as they were when graded, the others with text only.
   List<GradingPage> pages = const [];
+
+  /// The range of the latest run; the chip and the results sheet show it.
+  GradeRange? latestRange;
+
+  /// The range graded last, also in earlier sessions (from the sidecar).
+  GradeRange? _lastRange;
   GradingTimings? timings;
 
   /// The user's key choice, in note page indices.
@@ -152,7 +166,39 @@ class GradeController extends ChangeNotifier {
   final _debugCache = <int, PageDebug>{};
 
   bool get hasResults => outcome != null;
-  GradeResult? get result => outcome?.result;
+
+  /// The grades of the latest range.
+  GradeResult? get result {
+    final out = outcome;
+    final range = latestRange;
+    if (out == null) return null;
+    return range == null ? out.result : resultInRange(out.result, range);
+  }
+
+  /// The grades of earlier ranges that were not graded again since.
+  List<QuestionGrade> get earlierGrades {
+    final out = outcome;
+    final range = latestRange;
+    if (out == null || range == null) return const [];
+    return [
+      for (final g in out.result.grades)
+        if (!range.contains(g.pageIndex)) g,
+    ];
+  }
+
+  /// Number of pages of the note.
+  int get pageCount => coreInfo.pages.length;
+
+  /// The range the Grade dialog starts with: after the range graded last,
+  /// or every page.
+  Future<GradeRange> suggestedRange() async {
+    try {
+      await _prepare();
+    } catch (_) {
+      // Fall back to the in-session state.
+    }
+    return GradeRange.defaultFor(pageCount: pageCount, last: _lastRange);
+  }
 
   /// Whether the overlay has anything to draw.
   bool get overlayActive =>
@@ -168,9 +214,20 @@ class GradeController extends ChangeNotifier {
     return _store;
   }
 
-  /// Reads the note and grades it. Never throws: failures end up in
-  /// [error].
-  Future<void> grade() async {
+  /// Looks up the PDF's id and loads its sidecar (once per PDF).
+  Future<void> _prepare() async {
+    final notePages = coreInfo.pages;
+    final refs = GraderService.pdfPages(notePages);
+    if (refs.isEmpty) return;
+    final doc = await service.documentId(notePages);
+    _indexMap = PageIndexMap(refs, single: doc.single);
+    await _loadSidecar(doc.id);
+  }
+
+  /// Reads the note and grades the pages of [range] (every page when null).
+  /// Pages graded earlier in this session keep their marks unless they are in
+  /// [range]. Never throws: failures end up in [error].
+  Future<void> grade({GradeRange? range}) async {
     if (status == GradeStatus.running) return;
     status = GradeStatus.running;
     error = null;
@@ -183,32 +240,50 @@ class GradeController extends ChangeNotifier {
       if (refs.isEmpty) {
         throw StateError(GradingStrings.noPdfPages);
       }
+      final last = notePages.length - 1;
+      final wanted = range == null
+          ? GradeRange.all(notePages.length)
+          : GradeRange(max(0, range.from), min(last, range.to));
+      if (wanted.to < wanted.from) {
+        throw StateError(GradingStrings.noPagesInRange);
+      }
 
       final extraction = Stopwatch()..start();
       final collected = await service.collectPages(
         notePages,
+        range: wanted,
         onProgress: (done, total) {
           doneCount = done;
           totalCount = total;
           notifyListeners();
         },
       );
-      final doc = await service.documentId(notePages);
-      _indexMap = PageIndexMap(refs, single: doc.single);
-      await _loadSidecar(doc.id);
+      await _prepare();
       extraction.stop();
+
+      // Pages graded earlier and not in this range keep their grading input.
+      final before = {for (final p in pages) p.pageIndex: p};
+      final merged = [
+        for (final p in collected)
+          if (!p.inRange && (before[p.pageIndex]?.inRange ?? false))
+            before[p.pageIndex]!
+          else
+            p,
+      ];
 
       final run = Stopwatch()..start();
       final job = GradeJob(
-        pages: collected,
+        pages: merged,
         keyOverride: keyOverride,
         corrections: corrections,
       );
       final out = await _runJob(job);
       run.stop();
 
-      pages = collected;
+      pages = merged;
       outcome = out;
+      latestRange = wanted;
+      _lastRange = wanted;
       timings = GradingTimings(
         extraction: extraction.elapsed,
         grading: run.elapsed,
@@ -216,6 +291,11 @@ class GradeController extends ChangeNotifier {
       _debugCache.clear();
       selected = null;
       status = GradeStatus.done;
+      notifyListeners();
+      final id = _docId;
+      final store = await _getStore();
+      if (id != null && store != null) await store.saveLastRange(id, wanted);
+      return;
     } catch (e) {
       error = GradingStrings.errorText(e);
       status = GradeStatus.error;
@@ -231,6 +311,7 @@ class GradeController extends ChangeNotifier {
     final data = await store.load(id);
     keyOverride = data.keyOverride?.mapPages(_indexMap.fromStored);
     corrections = data.corrections;
+    _lastRange = data.lastRange;
   }
 
   Future<void> _regrade() async {
@@ -256,6 +337,40 @@ class GradeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Key pages chosen outside the graded range have only their text layer
+  /// (or cached OCR); read them with OCR now if that is too thin.
+  Future<void> _readKeyPages() async {
+    final chosen = keyOverride?.keyPages;
+    if (chosen == null) return;
+    final need = {
+      for (final p in pages)
+        if (!p.inRange &&
+            chosen.contains(p.pageIndex) &&
+            textLayerNeedsOcr(p.text))
+          p.pageIndex,
+    };
+    if (need.isEmpty) return;
+    status = GradeStatus.running;
+    doneCount = 0;
+    totalCount = need.length;
+    notifyListeners();
+    try {
+      final read = await service.readTexts(
+        coreInfo.pages,
+        need,
+        onProgress: (done, total) {
+          doneCount = done;
+          notifyListeners();
+        },
+      );
+      final byPage = {for (final p in read) p.pageIndex: p};
+      pages = [for (final p in pages) byPage[p.pageIndex] ?? p];
+    } catch (e) {
+      error = GradingStrings.errorText(e);
+    }
+    status = GradeStatus.done;
+  }
+
   /// Sets (or with null resets) the key pages and grades again.
   Future<void> setKeyOverride(KeyOverride? override) async {
     keyOverride = override;
@@ -264,6 +379,7 @@ class GradeController extends ChangeNotifier {
     if (id != null && store != null) {
       await store.saveKeyOverride(id, override?.mapPages(_indexMap.toStored));
     }
+    await _readKeyPages();
     await _regrade();
   }
 
@@ -388,9 +504,12 @@ class GradeController extends ChangeNotifier {
     final out = outcome;
     final t = timings;
     if (out == null || t == null) return '';
+    final range = latestRange;
     return buildGradingReport(
       pages: pages,
-      outcome: out,
+      outcome: range == null ? out : outcomeInRange(out, range),
+      range: range,
+      pageCount: pageCount,
       timings: t,
       keyOverride: keyOverride,
       buildInfo: buildInfo,

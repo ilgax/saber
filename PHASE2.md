@@ -8,8 +8,9 @@ touched, to keep merges with upstream trivial).
 
 ## What was built
 
-- **Grade button** (first entry of the editor app bar). Tap: reads the PDF text
-  of every page (with a progress ring), grades on a background isolate, shows a
+- **Grade button** (first entry of the editor app bar). Tap: asks which pages
+  to grade (see *Grading a range* below), reads the PDF text
+  (with a progress ring), grades on a background isolate, shows a
   chip like `17/20 correct, 2 unsure, 1 unanswered` and opens the results sheet.
   Tap the chip later to reopen the sheet. Long-press the button or chip toggles
   the debug overlay. Errors show a readable message (snackbar and tooltip),
@@ -54,6 +55,36 @@ touched, to keep merges with upstream trivial).
   option line, its region the options), so marks and ink matching work there.
   Only punctuated labels (`A)`, `(A)`, `A.`) count at the top of a page, and a
   page-top header without options is not a continuation.
+
+## Grading a range
+
+Tapping Grade opens the *Grade pages* dialog: From and To (1-based note page
+numbers, as in Saber's page counter), *All pages*, Grade / Cancel; bad input
+shows an inline error. The results sheet has *Grade more pages…* (the same
+dialog) and *Grade again* repeats the latest range.
+
+- **Defaults**: nothing graded before: 1 to the last page. Last graded range
+  a-b: b+1 to the last page, or 1 to the last page when b was the last page.
+  The last range is kept in the sidecar (`"range": {"from", "to"}`, note page
+  indices, optional so old sidecars load) and survives closing the note.
+- **What is read**: the text of every PDF page is extracted (cheap) so keys
+  outside the range are found, but OCR runs only for pages in the range;
+  outside it only already cached OCR (memory or disk) is used. Questions are
+  located on all pages (so tests are numbered and paired with key blocks as in
+  a full run) but only pages in the range are graded and marked
+  (`GradingPage.inRange`); pages outside have no strokes. Progress and timing
+  cover the range only. If a separate key page outside the range needs OCR
+  that is not cached, the key is not found and *Key pages…* applies; choosing
+  key pages there OCRs those pages (if their text layer is too thin) before
+  grading again.
+- **Accumulation** (per open note): marks of earlier ranges stay; grading
+  pages again replaces their marks. Earlier pages keep the strokes they had
+  when graded. The chip and the sheet show the latest range (`p6–9: 10/12
+  correct`); earlier pages are listed in a collapsed *Earlier pages* section.
+  Corrections and key overrides work on every graded page.
+- **Report**: `range: pages a-b of N`, per-page detail only for pages in the
+  range plus the key pages used; questions, totals and the suspicious list
+  cover the range.
 
 ## The two upstream hooks
 

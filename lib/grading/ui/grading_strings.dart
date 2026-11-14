@@ -1,3 +1,4 @@
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/models.dart';
 
 /// All user-visible text of the grading UI, in English. (Upstream's i18n
@@ -33,21 +34,40 @@ abstract final class GradingStrings {
   static const splitBlock = 'Another test on these key pages';
   static const removeBlock = 'Remove';
   static const apply = 'Apply';
+  static const gradePagesTitle = 'Grade pages';
+  static const from = 'From';
+  static const to = 'To';
+  static const allPages = 'All pages';
+  static const gradeMore = 'Grade more pages…';
+  static const noPagesInRange = 'There are no pages in that range.';
+  static const earlierPages = 'Earlier pages';
+
+  static String gradePagesHelp(int pageCount) =>
+      'Pages of this note, 1 to $pageCount.';
 
   static String errorText(Object error) =>
       'Grading failed: ${error.toString().split('\n').first}';
 
-  static String summary(GradeResult r) {
+  /// [range] is shown (`p6–9: `) unless it is the whole note.
+  static String summary(GradeResult r, {GradeRange? range, int? pageCount}) {
     final total = r.grades.length;
     final unsure = r.count(Verdict.unsure);
     final unanswered = r.count(Verdict.unanswered);
-    return '${r.count(Verdict.correct)}/$total correct'
+    final prefix =
+        range == null || (pageCount != null && range.covers(pageCount))
+        ? ''
+        : '${range.label}: ';
+    return '$prefix${r.count(Verdict.correct)}/$total correct'
         '${unsure > 0 ? ', $unsure unsure' : ''}'
         '${unanswered > 0 ? ', $unanswered unanswered' : ''}';
   }
 
-  static String fullSummary(GradeResult r) =>
-      '${r.count(Verdict.correct)} correct, ${r.count(Verdict.wrong)} wrong, '
+  static String fullSummary(
+    GradeResult r, {
+    GradeRange? range,
+    int? pageCount,
+  }) =>
+      '${range == null || (pageCount != null && range.covers(pageCount)) ? '' : 'Pages ${range.from + 1}-${range.to + 1}: '}${r.count(Verdict.correct)} correct, ${r.count(Verdict.wrong)} wrong, '
       '${r.count(Verdict.unsure)} unsure, ${r.count(Verdict.unanswered)} '
       'unanswered (of ${r.grades.length})';
 

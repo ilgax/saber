@@ -9,12 +9,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:saber/data/flavor_config.dart';
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/models.dart';
 import 'package:saber/grading/sidecar_store.dart';
 import 'package:saber/grading/ui/grade_button.dart';
 import 'package:saber/grading/ui/grade_controller.dart';
 import 'package:saber/grading/ui/grade_marks_overlay.dart';
+import 'package:saber/grading/ui/grade_range_dialog.dart';
 import 'package:saber/grading/ui/grading_strings.dart';
 import 'package:saber/grading/ui/mark_placement.dart';
 import 'package:saber/grading/ui/results_sheet.dart';
@@ -84,6 +86,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  /// Taps the Grade icon and accepts the dialog's default range.
+  Future<void> tapGrade(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.grading));
+    await settleUntil(
+      tester,
+      () => find.byType(GradeRangeDialog).evaluate().isNotEmpty,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, GradingStrings.grade));
   }
 
   void bigScreen(WidgetTester tester) {
@@ -322,6 +334,8 @@ void main() {
     });
   });
 
+  group('grade range dialog', gradeRangeDialogTests);
+
   group('grade button', () {
     Widget host(NoteFixture n) => MaterialApp(
       home: Scaffold(
@@ -348,10 +362,14 @@ void main() {
       expect(find.byIcon(Icons.grading), findsOneWidget);
       expect(find.byType(ActionChip), findsNothing);
 
-      await tester.tap(find.byIcon(Icons.grading));
+      await tapGrade(tester);
       await settleUntil(
         tester,
         () => c.status != GradeStatus.running && c.hasResults,
+      );
+      await settleUntil(
+        tester,
+        () => find.text(GradingStrings.results).evaluate().isNotEmpty,
       );
       await tester.pump(const Duration(seconds: 1));
       expect(c.status, GradeStatus.done, reason: c.error);
@@ -373,7 +391,7 @@ void main() {
         },
       );
       await tester.pumpWidget(host(n));
-      await tester.tap(find.byIcon(Icons.grading));
+      await tapGrade(tester);
       await settleUntil(
         tester,
         () =>
@@ -399,7 +417,7 @@ void main() {
         runner: (_) async => throw StateError('boom'),
       );
       await tester.pumpWidget(host(n));
-      await tester.tap(find.byIcon(Icons.grading));
+      await tapGrade(tester);
       await settleUntil(tester, () => c.status == GradeStatus.error);
       await tester.pump(const Duration(seconds: 1));
       expect(c.status, GradeStatus.error);
@@ -454,6 +472,41 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Question 1'), findsOneWidget);
       expect(find.text('B, circle, high confidence'), findsOneWidget);
+    });
+
+    testWidgets('Grade more pages opens the dialog after the last range', (
+      tester,
+    ) async {
+      bigScreen(tester);
+      final (_, c) = await note(tester, ink: (n) => n.circle(0, 1, 'B'));
+      // The note has a question page and the key page; grade page 1 only.
+      await tester.runAsync(() => c.grade(range: const GradeRange(0, 0)));
+      await tester.pumpWidget(sheetHost(c));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(GradingStrings.gradeMore));
+      await settleUntil(
+        tester,
+        () => find.byType(GradeRangeDialog).evaluate().isNotEmpty,
+      );
+      expect(find.text(GradingStrings.gradePagesTitle), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('grade_from')))
+            .controller!
+            .text,
+        '2',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('grade_to')))
+            .controller!
+            .text,
+        '2',
+      );
+      await tester.tap(find.text(GradingStrings.cancel));
+      await tester.pumpAndSettle();
+      expect(c.latestRange, const GradeRange(0, 0));
     });
 
     testWidgets('hide marks and the debug switch', (tester) async {
@@ -627,5 +680,114 @@ void main() {
     );
     expect(GradingStrings.summary(r([v[0], v[0]])), '2/2 correct');
     expect(GradingStrings.summary(r([])), '0/0 correct');
+  });
+}
+
+void gradeRangeDialogTests() {
+  Widget host(
+    int pageCount,
+    GradeRange initial,
+    void Function(GradeRange?) out,
+  ) => MaterialApp(
+    home: Scaffold(
+      body: Builder(
+        builder: (context) => TextButton(
+          onPressed: () async => out(
+            await showDialog<GradeRange>(
+              context: context,
+              builder: (_) =>
+                  GradeRangeDialog(pageCount: pageCount, initial: initial),
+            ),
+          ),
+          child: const Text('open'),
+        ),
+      ),
+    ),
+  );
+
+  String field(WidgetTester t, String key) =>
+      t.widget<TextField>(find.byKey(Key(key))).controller!.text;
+
+  Future<void> open(
+    WidgetTester t,
+    GradeRange? last,
+    void Function(GradeRange?) out,
+  ) async {
+    await t.pumpWidget(
+      host(15, GradeRange.defaultFor(pageCount: 15, last: last), out),
+    );
+    await t.tap(find.text('open'));
+    await t.pumpAndSettle();
+  }
+
+  testWidgets('defaults: nothing graded yet', (tester) async {
+    await open(tester, null, (_) {});
+    expect(find.text(GradingStrings.gradePagesTitle), findsOneWidget);
+    expect(field(tester, 'grade_from'), '1');
+    expect(field(tester, 'grade_to'), '15');
+  });
+
+  testWidgets('defaults: after a prior range, and after the last page', (
+    tester,
+  ) async {
+    await open(tester, const GradeRange(5, 8), (_) {});
+    expect(field(tester, 'grade_from'), '10');
+    expect(field(tester, 'grade_to'), '15');
+    await tester.tap(find.text(GradingStrings.cancel));
+    await tester.pumpAndSettle();
+    await open(tester, const GradeRange(10, 14), (_) {});
+    expect(field(tester, 'grade_from'), '1');
+    expect(field(tester, 'grade_to'), '15');
+  });
+
+  testWidgets('invalid input shows an error and keeps the dialog', (
+    tester,
+  ) async {
+    GradeRange? result;
+    var closed = false;
+    await open(tester, null, (r) {
+      result = r;
+      closed = true;
+    });
+    for (final bad in [
+      ('0', '3'),
+      ('4', '16'),
+      ('9', '6'),
+      ('a', '3'),
+      ('', ''),
+    ]) {
+      await tester.enterText(find.byKey(const Key('grade_from')), bad.$1);
+      await tester.enterText(find.byKey(const Key('grade_to')), bad.$2);
+      await tester.tap(find.widgetWithText(FilledButton, GradingStrings.grade));
+      await tester.pump();
+      expect(
+        find.byKey(const Key('grade_range_error')),
+        findsOneWidget,
+        reason: '$bad',
+      );
+      expect(closed, isFalse);
+    }
+    // Editing clears the error; a valid range closes with 0-based indices.
+    await tester.enterText(find.byKey(const Key('grade_from')), '6');
+    await tester.pump();
+    expect(find.byKey(const Key('grade_range_error')), findsNothing);
+    await tester.enterText(find.byKey(const Key('grade_to')), '9');
+    await tester.tap(find.widgetWithText(FilledButton, GradingStrings.grade));
+    await tester.pumpAndSettle();
+    expect(result, const GradeRange(5, 8));
+  });
+
+  testWidgets('All pages fills in the whole note; Cancel returns null', (
+    tester,
+  ) async {
+    GradeRange? result = const GradeRange(1, 1);
+    await open(tester, const GradeRange(2, 3), (r) => result = r);
+    await tester.tap(find.text(GradingStrings.allPages));
+    await tester.pump();
+    expect(field(tester, 'grade_from'), '1');
+    expect(field(tester, 'grade_to'), '15');
+    await tester.tap(find.text(GradingStrings.cancel));
+    await tester.pumpAndSettle();
+    expect(result, isNull);
   });
 }

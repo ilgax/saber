@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/grading/ui/grade_controller.dart';
+import 'package:saber/grading/ui/grade_range_dialog.dart';
 import 'package:saber/grading/ui/grading_strings.dart';
 import 'package:saber/grading/ui/results_sheet.dart';
 
@@ -44,7 +45,11 @@ class GradeButton extends StatelessWidget {
                   label: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 220),
                     child: Text(
-                      GradingStrings.summary(controller.result!),
+                      GradingStrings.summary(
+                        controller.result!,
+                        range: controller.latestRange,
+                        pageCount: controller.pageCount,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -68,8 +73,11 @@ class GradeButton extends StatelessWidget {
                   radius: 24,
                   onLongPress: () => controller.setDebug(!controller.debug),
                   onTap: () async {
-                    await controller.grade();
-                    if (!context.mounted) return;
+                    final graded = await showGradeRangeDialog(
+                      context,
+                      controller,
+                    );
+                    if (!graded || !context.mounted) return;
                     if (controller.status == GradeStatus.error) {
                       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
                         SnackBar(content: Text(controller.error ?? '')),

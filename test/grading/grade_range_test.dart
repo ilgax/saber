@@ -270,18 +270,10 @@ void main() {
       final pages = await thinPages(4);
       final fake = FakeOcrEngine([flexcilContent('DAAEBA').words()]);
       final service = GraderService(ocr: fake, ocrStore: () async => null);
-      final collected = await service.collectPages(
-        pages,
-        range: const GradeRange(0, 0),
-        ocrPages: {3},
-      );
-      expect(fake.calls, 2);
-      expect(collected.map((p) => p.text.source), [
-        TextSource.ocr,
-        TextSource.textLayer,
-        TextSource.textLayer,
-        TextSource.ocr,
-      ]);
+      final read = await service.readTexts(pages, {3});
+      expect(fake.calls, 1);
+      expect(read.map((p) => (p.pageIndex, p.inRange)), [(3, false)]);
+      expect(read.single.text.source, TextSource.ocr);
     });
   });
 }

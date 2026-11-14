@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/flavor_config.dart';
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/models.dart';
 import 'package:saber/grading/sidecar_store.dart';
@@ -285,5 +286,116 @@ void main() {
     const m = PageIndexMap([], single: false);
     expect(m.toStored(3), 3);
     expect(m.fromStored(3), 3);
+  });
+
+  group('grading a range', () {
+    Future<(NoteFixture, GradeController)> open() async {
+      final note = await NoteFixture.create(twentyQuestionPdf());
+      addTearDown(note.dispose);
+      // Right answers on every question of pages 0-3 (1-16), none on page 4.
+      for (var n = 1; n <= 16; n++) {
+        note.circle((n - 1) ~/ 4, n, key20[n - 1]);
+      }
+      return (note, GradeController(note.coreInfo, store: store));
+    }
+
+    test('only the range is graded, the key page outside it is used', () async {
+      final (_, c) = await open();
+      final seen = <(int, int)>[];
+      c.addListener(() {
+        if (c.status == GradeStatus.running)
+          seen.add((c.doneCount, c.totalCount));
+      });
+      await c.grade(range: const GradeRange(1, 2));
+      expect(c.status, GradeStatus.done, reason: c.error);
+      expect(c.result!.grades.map((g) => g.number), [
+        for (var n = 5; n <= 12; n++) n,
+      ]);
+      expect(c.result!.count(Verdict.correct), 8);
+      expect(c.result!.keyStatus, KeyStatus.found);
+      expect(c.latestRange, const GradeRange(1, 2));
+      // Progress counts the pages of the range only.
+      expect(seen.last, (2, 2));
+      expect(seen.every((e) => e.$2 <= 2), isTrue);
+      expect(c.earlierGrades, isEmpty);
+    });
+
+    test('marks accumulate over ranges and regrading replaces them', () async {
+      final (note, c) = await open();
+      await c.grade(range: const GradeRange(0, 1));
+      expect(c.outcome!.result.grades, hasLength(8));
+
+      // Later ink on page 0 is not seen until page 0 is graded again.
+      note.coreInfo.pages[0].strokes.clear();
+      await c.grade(range: const GradeRange(2, 3));
+      expect(c.result!.grades, hasLength(8));
+      expect(c.outcome!.result.grades, hasLength(16));
+      expect(c.earlierGrades.map((g) => g.pageIndex).toSet(), {0, 1});
+      expect(c.outcome!.result.grade(1)!.verdict, Verdict.correct);
+      expect(c.outcome!.pages.keys.toSet(), {0, 1, 2, 3});
+
+      // Grade pages 1-2 again: page 1 and 2 are replaced, 0 and 3 stay.
+      note.coreInfo.pages[1].strokes.clear();
+      note.circle(1, 5, 'D'); // key B
+      await c.grade(range: const GradeRange(1, 2));
+      expect(c.outcome!.result.grades, hasLength(16));
+      expect(c.result!.grades, hasLength(8));
+      expect(c.outcome!.result.grade(5)!.verdict, Verdict.wrong);
+      expect(c.outcome!.result.grade(6)!.verdict, Verdict.unanswered);
+      expect(c.outcome!.result.grade(1)!.verdict, Verdict.correct);
+      expect(c.earlierGrades.map((g) => g.pageIndex).toSet(), {0, 3});
+    });
+
+    test('corrections and key overrides work on earlier ranges', () async {
+      final (_, c) = await open();
+      await c.grade(range: const GradeRange(0, 0));
+      await c.grade(range: const GradeRange(2, 2));
+      await c.setCorrection((0, 2), 'D'); // page 0, key C, ink on C
+      expect(c.outcome!.result.grade(2)!.verdict, Verdict.wrong);
+      expect(c.outcome!.result.grade(2)!.corrected, isTrue);
+      expect(c.corrections, hasLength(1));
+      await c.clearCorrection((0, 2));
+      expect(c.outcome!.result.grade(2)!.verdict, Verdict.correct);
+      await c.setKeyOverride(const KeyOverride({5}));
+      expect(c.outcome!.result.grades, hasLength(8));
+    });
+
+    test(
+      'the last range survives a new controller; defaults follow it',
+      () async {
+        final (note, c) = await open();
+        expect(await c.suggestedRange(), const GradeRange(0, 5));
+        await c.grade(range: const GradeRange(0, 1));
+        expect(await c.suggestedRange(), const GradeRange(2, 5));
+
+        final again = GradeController(note.coreInfo, store: store);
+        expect(await again.suggestedRange(), const GradeRange(2, 5));
+        await again.grade(range: const GradeRange(3, 5));
+        final third = GradeController(note.coreInfo, store: store);
+        expect(await third.suggestedRange(), const GradeRange(0, 5));
+      },
+    );
+
+    test('the report names the range and lists only its pages', () async {
+      final (_, c) = await open();
+      await c.grade(range: const GradeRange(0, 1));
+      final r = c.report();
+      expect(r, contains('range: pages 1-2 of 6'));
+      expect(r, contains('  page 1: '));
+      expect(r, contains('  page 2: '));
+      expect(r, contains('  page 6: ')); // the key page, outside the range
+      expect(r, contains('KEY PAGE'));
+      expect(r, isNot(contains('  page 3: ')));
+      expect(r, isNot(contains('  page 5: ')));
+      expect(r, contains('PAGES: 3'));
+      expect(r, contains('page 2: '));
+      expect(
+        RegExp(r'#\d+ page (\d+):')
+            .allMatches(r)
+            .map((m) => m.group(1))
+            .toSet(),
+        {'1', '2'},
+      );
+    });
   });
 }

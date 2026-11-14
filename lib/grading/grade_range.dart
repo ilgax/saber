@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/models.dart';
 
 /// A range of note pages to grade, as 0-based inclusive page indices.
@@ -75,3 +76,18 @@ GradeResult resultInRange(GradeResult result, GradeRange range) => GradeResult(
       if (range.contains(g.pageIndex)) g,
   ],
 );
+
+/// [outcome] reduced to the questions and pages of [range].
+GradingOutcome outcomeInRange(GradingOutcome outcome, GradeRange range) =>
+    GradingOutcome(
+      analysis: outcome.analysis,
+      result: resultInRange(outcome.result, range),
+      questions: {
+        for (final e in outcome.questions.entries)
+          if (range.contains(e.value.question.pageIndex)) e.key: e.value,
+      },
+      pages: {
+        for (final e in outcome.pages.entries)
+          if (range.contains(e.key)) e.key: e.value,
+      },
+    );

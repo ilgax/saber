@@ -140,14 +140,11 @@ class GraderService {
   /// their text layer is too thin, their strokes and PDF ink. The other pages
   /// are returned with [GradingPage.inRange] false, with text only (the text
   /// layer, or OCR already cached in memory or on disk, never new OCR), so
-  /// the key can still be found there. [ocrPages] (note page indices) are
-  /// out-of-range pages that get OCR anyway, e.g. the key pages the user
-  /// chose. Yields to the event loop between pages and reports progress as
-  /// (done, total) over the graded pages.
+  /// the key can still be found there. Yields to the event loop between
+  /// pages and reports progress as (done, total) over the graded pages.
   Future<List<GradingPage>> collectPages(
     List<EditorPage> pages, {
     GradeRange? range,
-    Set<int> ocrPages = const {},
     void Function(int done, int total)? onProgress,
   }) async {
     final refs = pdfPages(pages);
@@ -162,11 +159,7 @@ class GraderService {
       final read = await _readText(
         image,
         ref.documentKey,
-        inRange
-            ? OcrMode.run
-            : ocrPages.contains(i)
-            ? OcrMode.run
-            : OcrMode.cached,
+        inRange ? OcrMode.run : OcrMode.cached,
       );
       if (read == null) continue;
       final text = read.text;
@@ -205,6 +198,41 @@ class GraderService {
     }
     await _ocr.flush();
     return gradingPages;
+  }
+
+  /// The text of the note pages [notePages] only, with OCR where the text
+  /// layer is too thin (e.g. the key pages the user chose outside the graded
+  /// range). The pages are not graded ([GradingPage.inRange] false).
+  Future<List<GradingPage>> readTexts(
+    List<EditorPage> pages,
+    Set<int> notePages, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final result = <GradingPage>[];
+    for (final ref in pdfPages(pages)) {
+      if (!notePages.contains(ref.notePage)) continue;
+      final page = pages[ref.notePage];
+      final read = await _readText(
+        page.backgroundImage as PdfEditorImage,
+        ref.documentKey,
+        OcrMode.run,
+      );
+      if (read == null) continue;
+      result.add(
+        GradingPage(
+          pageIndex: ref.notePage,
+          text: read.text,
+          noteSize: page.size,
+          strokes: const [],
+          ocrStatus: read.status,
+          inRange: false,
+        ),
+      );
+      onProgress?.call(result.length, notePages.length);
+      await Future<void>.delayed(Duration.zero);
+    }
+    await _ocr.flush();
+    return result;
   }
 
   /// An id of the PDF(s) shown by [pages]: the SHA-256 of the PDF bytes

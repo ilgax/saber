@@ -1,7 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/models.dart';
 import 'package:saber/grading/ui/grade_controller.dart';
+import 'package:saber/grading/ui/grade_range_dialog.dart';
 import 'package:saber/grading/ui/grading_strings.dart';
 import 'package:saber/grading/ui/key_pages_dialog.dart';
 import 'package:saber/grading/ui/question_detail_sheet.dart';
@@ -44,7 +46,8 @@ class ResultsSheet extends StatelessWidget {
         if (outcome == null) {
           return const Center(child: Text(GradingStrings.noQuestions));
         }
-        final result = outcome.result;
+        final result = controller.result!;
+        final earlier = controller.earlierGrades;
         final analysis = outcome.analysis;
         final detection = analysis.detection;
         final t = controller.timings;
@@ -58,7 +61,11 @@ class ResultsSheet extends StatelessWidget {
             Text(
               result.grades.isEmpty
                   ? GradingStrings.noQuestions
-                  : GradingStrings.fullSummary(result),
+                  : GradingStrings.fullSummary(
+                      result,
+                      range: controller.latestRange,
+                      pageCount: controller.pageCount,
+                    ),
             ),
             if (t != null)
               Text(
@@ -89,8 +96,14 @@ class ResultsSheet extends StatelessWidget {
                 FilledButton.tonal(
                   onPressed: controller.status == GradeStatus.running
                       ? null
-                      : controller.grade,
+                      : () => controller.grade(range: controller.latestRange),
                   child: const Text(GradingStrings.gradeAgain),
+                ),
+                FilledButton.tonal(
+                  onPressed: controller.status == GradeStatus.running
+                      ? null
+                      : () => showGradeRangeDialog(context, controller),
+                  child: const Text(GradingStrings.gradeMore),
                 ),
                 OutlinedButton(
                   onPressed: () =>
@@ -141,32 +154,48 @@ class ResultsSheet extends StatelessWidget {
             ),
             const Divider(),
             Text(GradingStrings.questions, style: theme.textTheme.titleMedium),
-            for (final g in result.grades)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: _VerdictIcon(g.verdict),
+            for (final g in result.grades) _tile(context, g, analysis),
+            if (earlier.isNotEmpty)
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
                 title: Text(
-                  'Question ${g.number}'
-                  '${analysis.tests.length > 1 ? ' (test ${g.testIndex + 1})' : ''}'
-                  ' - ${GradingStrings.verdict(g.verdict)}'
-                  '${g.corrected ? ' (${GradingStrings.editedBadge})' : ''}',
+                  '${GradingStrings.earlierPages} '
+                  '(${GradingStrings.summary(GradeResult(keyStatus: result.keyStatus, keyDetection: result.keyDetection, grades: earlier))})',
                 ),
-                subtitle: Text(
-                  'read ${g.detectedLetter ?? '-'}, key ${g.keyAnswer ?? '-'}'
-                  ', page ${g.pageIndex + 1}',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => showQuestionDetail(context, controller, (
-                  g.testIndex,
-                  g.number,
-                )),
+                children: [
+                  for (final g in earlier) _tile(context, g, analysis),
+                ],
               ),
           ],
         );
       },
     );
   }
+}
+
+extension on ResultsSheet {
+  Widget _tile(
+    BuildContext context,
+    QuestionGrade g,
+    DocumentAnalysis analysis,
+  ) => ListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    leading: _VerdictIcon(g.verdict),
+    title: Text(
+      'Question ${g.number}'
+      '${analysis.tests.length > 1 ? ' (test ${g.testIndex + 1})' : ''}'
+      ' - ${GradingStrings.verdict(g.verdict)}'
+      '${g.corrected ? ' (${GradingStrings.editedBadge})' : ''}',
+    ),
+    subtitle: Text(
+      'read ${g.detectedLetter ?? '-'}, key ${g.keyAnswer ?? '-'}'
+      ', page ${g.pageIndex + 1}',
+    ),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: () =>
+        showQuestionDetail(context, controller, (g.testIndex, g.number)),
+  );
 }
 
 class _VerdictIcon extends StatelessWidget {

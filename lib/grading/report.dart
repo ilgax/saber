@@ -1,4 +1,5 @@
 import 'package:saber/grading/diagnostics.dart';
+import 'package:saber/grading/grade_range.dart';
 import 'package:saber/grading/grader.dart';
 import 'package:saber/grading/grading_config.dart';
 import 'package:saber/grading/layout/text_extractor.dart';
@@ -31,6 +32,8 @@ String buildGradingReport({
   required GradingTimings timings,
   KeyOverride? keyOverride,
   String buildInfo = '',
+  GradeRange? range,
+  int? pageCount,
 }) {
   final b = StringBuffer();
   final analysis = outcome.analysis;
@@ -47,8 +50,23 @@ String buildGradingReport({
   );
   b.writeln();
 
-  b.writeln('PAGES: ${pages.length}');
-  for (final p in pages) {
+  // With a range: the pages in it, plus the key pages (anywhere) that were
+  // used.
+  final listed = [
+    for (final p in pages)
+      if (range == null ||
+          range.contains(p.pageIndex) ||
+          keyPages.contains(p.pageIndex))
+        p,
+  ];
+  if (range != null) {
+    b.writeln(
+      'range: pages ${range.from + 1}-${range.to + 1}'
+      '${pageCount == null ? '' : ' of $pageCount'}',
+    );
+  }
+  b.writeln('PAGES: ${listed.length}');
+  for (final p in listed) {
     final t = p.text;
     final glyphs = t.tokens.fold<int>(0, (n, x) => n + x.text.length);
     final ink = outcome.pages[p.pageIndex];
@@ -69,6 +87,7 @@ String buildGradingReport({
       '${t.hasText ? '$source, $glyphs chars' : 'NO text layer'}$ocrNote, '
       '${t.pdfSize.width.toStringAsFixed(0)} x ${t.pdfSize.height.toStringAsFixed(0)} pt, '
       'rotation ${t.rotation}, '
+      '${range != null && !range.contains(p.pageIndex) ? 'outside the range, ' : ''}'
       '${keyPages.contains(p.pageIndex) ? 'KEY PAGE' : '${questions.length} question(s)'}'
       '${analysis.footerKeyPages.contains(p.pageIndex) ? ' + key line' : ''}, '
       'strokes ${own?.total ?? 0} '
@@ -140,9 +159,13 @@ String buildGradingReport({
 
   b.writeln();
   b.writeln('SUSPICIOUS:');
-  final findings = suspiciousFindings(analysis, {
-    for (final p in pages) p.pageIndex: p.text,
-  });
+  final findings = suspiciousFindings(
+    range == null ? analysis : _inRange(analysis, range),
+    {
+      for (final p in listed)
+        if (range == null || range.contains(p.pageIndex)) p.pageIndex: p.text,
+    },
+  );
   for (final f in findings) {
     b.writeln('  - $f');
   }
@@ -153,3 +176,25 @@ String buildGradingReport({
   GradingConfig.all.forEach((k, v) => b.writeln('  $k = $v'));
   return b.toString();
 }
+
+/// [analysis] with only the questions of pages in [range] (the tests keep
+/// their positions), so findings about tests are not about pages that were not
+/// graded.
+DocumentAnalysis _inRange(DocumentAnalysis analysis, GradeRange range) =>
+    DocumentAnalysis(
+      detection: analysis.detection,
+      questionsByPage: {
+        for (final e in analysis.questionsByPage.entries)
+          if (range.contains(e.key)) e.key: e.value,
+      },
+      tests: [
+        for (final t in analysis.tests)
+          [
+            for (final q in t)
+              if (range.contains(q.pageIndex)) q,
+          ],
+      ],
+      pairedBlocks: analysis.pairedBlocks,
+      pairingProblem: analysis.pairingProblem,
+      footerKeyPages: analysis.footerKeyPages,
+    );
