@@ -258,13 +258,19 @@ class FxDoc {
     ]);
   }
 
+  /// Overrides [noteSize] (a note page whose aspect ratio differs from the
+  /// PDF's).
+  Size? forcedNoteSize;
+
   /// Note page size as the editor makes it when importing the PDF.
-  Size noteSize(int page) => Size(
-    EditorPage.defaultWidth,
-    EditorPage.defaultWidth *
-        texts[page].pdfSize.height /
-        texts[page].pdfSize.width,
-  );
+  Size noteSize(int page) =>
+      forcedNoteSize ??
+      Size(
+        EditorPage.defaultWidth,
+        EditorPage.defaultWidth *
+            texts[page].pdfSize.height /
+            texts[page].pdfSize.width,
+      );
 
   PageMapper mapper(int page) =>
       PageMapper(pdfSize: texts[page].pdfSize, noteSize: noteSize(page));
