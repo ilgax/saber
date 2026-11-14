@@ -194,4 +194,43 @@ void main() {
     expect(KeyOverride.fromJson(blocks.toJson()), blocks);
     expect(blocks.keyPages, {3, 4, 6});
   });
+
+  test(
+    'mapPages passes indices through a function and drops the unmappable',
+    () {
+      int? plusOne(int p) => p + 1;
+      expect(
+        const KeyOverride({1, 4}).mapPages(plusOne),
+        const KeyOverride({2, 5}),
+      );
+      expect(const KeyOverride({1}).mapPages((_) => null), isNull);
+      final mapped = KeyOverride.fromBlocks(const [
+        KeyBlockOverride(
+          firstKeyPage: 3,
+          lastKeyPage: 4,
+          firstQuestionPage: 0,
+          lastQuestionPage: 2,
+        ),
+        KeyBlockOverride(firstKeyPage: 6, lastKeyPage: 6),
+      ]).mapPages(plusOne)!;
+      expect(mapped.blocks[0].firstKeyPage, 4);
+      expect(mapped.blocks[0].lastKeyPage, 5);
+      expect(mapped.blocks[0].firstQuestionPage, 1);
+      expect(mapped.blocks[0].lastQuestionPage, 3);
+      expect(mapped.blocks[1].firstQuestionPage, isNull);
+      // An unmappable question page makes the range "automatic"; an
+      // unmappable key page drops the block.
+      final partial = KeyOverride.fromBlocks(const [
+        KeyBlockOverride(
+          firstKeyPage: 3,
+          lastKeyPage: 3,
+          firstQuestionPage: 0,
+          lastQuestionPage: 2,
+        ),
+        KeyBlockOverride(firstKeyPage: 9, lastKeyPage: 9),
+      ]).mapPages((p) => p == 0 || p == 9 ? null : p)!;
+      expect(partial.blocks, hasLength(1));
+      expect(partial.blocks.single.firstQuestionPage, isNull);
+    },
+  );
 }
