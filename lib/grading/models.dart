@@ -120,6 +120,7 @@ class KeyEntry {
     required this.number,
     required this.letter,
     required this.pageIndex,
+    this.rect,
   });
 
   final int number;
@@ -127,6 +128,10 @@ class KeyEntry {
   /// Upper-case letter.
   final String letter;
   final int pageIndex;
+
+  /// Where the entry is on the page, in PDF visual space, when known. Not
+  /// part of equality.
+  final Rect? rect;
 
   @override
   bool operator ==(Object other) =>

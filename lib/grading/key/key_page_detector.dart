@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:saber/grading/grading_config.dart';
 import 'package:saber/grading/key/key_parser.dart';
@@ -45,9 +46,29 @@ abstract final class KeyPageDetector {
     var matched = 0, total = 0;
     for (final line in text.lines) {
       final lineText = line.text;
-      for (final e in KeyParser.parseEntries(lineText)) {
+      // Offsets of each token in lineText, to place entries on the page.
+      final starts = <int>[];
+      var offset = 0;
+      for (final t in line.tokens) {
+        starts.add(offset);
+        offset += t.text.length + 1;
+      }
+      for (final m in KeyParser.entryPattern.allMatches(lineText)) {
+        Rect? rect;
+        for (var i = 0; i < line.tokens.length; i++) {
+          final end = starts[i] + line.tokens[i].text.length;
+          if (starts[i] < m.end && m.start < end) {
+            final r = line.tokens[i].rect;
+            rect = rect == null ? r : rect.expandToInclude(r);
+          }
+        }
         entries.add(
-          KeyEntry(number: e.number, letter: e.letter, pageIndex: pageIndex),
+          KeyEntry(
+            number: int.parse(m.group(1)!),
+            letter: m.group(2)!.toUpperCase(),
+            pageIndex: pageIndex,
+            rect: rect,
+          ),
         );
       }
       final c = KeyParser.coverage(lineText);

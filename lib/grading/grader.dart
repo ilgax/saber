@@ -33,12 +33,40 @@ class GradingPage {
   final List<InkStroke> strokes;
 }
 
-/// Grades a document: locates the key and the questions, reads the ink, and
-/// compares. Pure and synchronous.
-///
-/// [keyOverride] states which pages are the key (the user's decision); the
-/// automatic detection is skipped then.
-GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
+/// What the grader found in a document before any ink is read: the key, the
+/// located questions and how tests and key blocks pair up. Questions are in
+/// PDF visual space. Used by [gradeDocument] and by diagnostic tools.
+class DocumentAnalysis {
+  const new({
+    required this.detection,
+    required this.questionsByPage,
+    required this.tests,
+    required this.pairedBlocks,
+    required this.pairingProblem,
+  });
+
+  /// The key as detected (or overridden), before pairing.
+  final KeyDetection detection;
+
+  /// Located questions per note page index (non-key pages only).
+  final Map<int, List<Question>> questionsByPage;
+
+  /// The questions split into tests, in document order.
+  final List<List<Question>> tests;
+
+  /// Key block i is for test i, with question pages set; null when the key is
+  /// not usable (see [pairingProblem]).
+  final List<KeyBlock>? pairedBlocks;
+
+  /// Why [pairedBlocks] is null, in words; null when paired.
+  final String? pairingProblem;
+}
+
+/// Finds the key, locates the questions and pairs tests with key blocks.
+DocumentAnalysis analyzeDocument(
+  List<GradingPage> pages, {
+  KeyOverride? keyOverride,
+}) {
   final sorted = [...pages]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
   final detection = KeyPageDetector.detect({
     for (final p in sorted) p.pageIndex: p.text,
@@ -47,7 +75,7 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
 
   // Locate questions on all non-key pages and split them into tests: the
   // numbering restarts at 1 for each test.
-  final located = <GradingPage, List<Question>>{};
+  final located = <int, List<Question>>{};
   final tests = <List<Question>>[];
   int? previous;
   for (final page in sorted) {
@@ -65,15 +93,34 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
       tests.last.add(tagged);
       questions.add(tagged);
     }
-    located[page] = questions;
+    located[page.pageIndex] = questions;
   }
 
-  final blocks = _pair(tests, detection);
+  final (blocks, problem) = _pair(tests, detection);
+  return DocumentAnalysis(
+    detection: detection,
+    questionsByPage: located,
+    tests: tests,
+    pairedBlocks: blocks,
+    pairingProblem: problem,
+  );
+}
+
+/// Grades a document: locates the key and the questions, reads the ink, and
+/// compares. Pure and synchronous.
+///
+/// [keyOverride] states which pages are the key (the user's decision); the
+/// automatic detection is skipped then.
+GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
+  final sorted = [...pages]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+  final analysis = analyzeDocument(pages, keyOverride: keyOverride);
+  final detection = analysis.detection;
+  final blocks = analysis.pairedBlocks;
   final paired = blocks != null;
 
   final grades = <QuestionGrade>[];
   for (final page in sorted) {
-    final questions = located[page];
+    final questions = analysis.questionsByPage[page.pageIndex];
     if (questions == null || questions.isEmpty) continue;
     final mapper = PageMapper(
       pdfSize: page.text.pdfSize,
@@ -89,7 +136,8 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
   }
 
   return GradeResult(
-    keyStatus: (tests.isEmpty ? detection.status == KeyStatus.found : paired)
+    keyStatus:
+        (analysis.tests.isEmpty ? detection.status == KeyStatus.found : paired)
         ? KeyStatus.found
         : KeyStatus.unknown,
     keyDetection: paired
@@ -104,19 +152,40 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
 }
 
 /// Pairs test i with key block i (both in document order). Returns the blocks
-/// in test order with their question pages set, or null when the key is not
-/// trustworthy: not found, different counts, or entries that do not match the
-/// test's question numbers.
-List<KeyBlock>? _pair(List<List<Question>> tests, KeyDetection detection) {
-  if (detection.status != KeyStatus.found) return null;
-  if (tests.isEmpty || tests.length != detection.blocks.length) return null;
+/// in test order with their question pages set, or null and the reason when
+/// the key is not trustworthy: not found, different counts, or entries that do
+/// not match the test's question numbers.
+(List<KeyBlock>?, String?) _pair(
+  List<List<Question>> tests,
+  KeyDetection detection,
+) {
+  if (detection.blocks.isEmpty) return (null, 'no key pages found');
+  if (detection.status != KeyStatus.found) {
+    return (
+      null,
+      'key confidence ${detection.confidence.toStringAsFixed(2)} is below '
+          '${GradingConfig.keyAcceptConfidence}',
+    );
+  }
+  if (tests.isEmpty) return (null, 'no questions located');
+  if (tests.length != detection.blocks.length) {
+    return (
+      null,
+      'count mismatch: ${tests.length} test(s) but '
+          '${detection.blocks.length} key block(s)',
+    );
+  }
   final result = <KeyBlock>[];
   for (var i = 0; i < tests.length; i++) {
     final block = detection.blocks[i];
     final numbers = {for (final q in tests[i]) q.number};
     final covered = numbers.where(block.answers.containsKey).length;
     if (covered < GradingConfig.keyMinQuestionCoverage * numbers.length) {
-      return null;
+      return (
+        null,
+        'low coverage: key block ${i + 1} has entries for only $covered of '
+            '${numbers.length} questions of test ${i + 1}',
+      );
     }
     final pages = tests[i].map((q) => q.pageIndex);
     result.add(
@@ -126,7 +195,7 @@ List<KeyBlock>? _pair(List<List<Question>> tests, KeyDetection detection) {
       ),
     );
   }
-  return result;
+  return (result, null);
 }
 
 QuestionGrade _grade(Question q, MarkReading reading, KeyBlock? block) {
