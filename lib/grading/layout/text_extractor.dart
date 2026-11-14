@@ -194,7 +194,15 @@ class TextExtractor {
 
 /// Reads the text layer of [page]. A page without text yields empty text.
 Future<PageText> extractPageText(PdfPage page) async {
-  if (!page.isLoaded) page = await page.ensureLoaded();
+  if (!page.isLoaded) {
+    // A progressively loaded document only measures its pages while something
+    // (normally a PdfPageView) asks it to; without a view `ensureLoaded` would
+    // wait forever. This is safe to call concurrently with such a view.
+    final document = page.document;
+    await document.loadPagesProgressively(startPageNumber: page.pageNumber);
+    page = document.pages[page.pageNumber - 1];
+    if (!page.isLoaded) page = await page.ensureLoaded();
+  }
   final size = Size(page.width, page.height);
   final pageIndex = page.pageNumber - 1;
   final raw = await page.loadText();
