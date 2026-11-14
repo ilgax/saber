@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   # Run on: manual dispatch, every push to main, and pushes to other branches
-  # only when this workflow file itself changed.
+  # only when they change the app (lib, android, pubspec) or this file.
   gate:
     name: Decide whether to build
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
           elif ! git fetch --quiet --depth=1 origin "$BEFORE"; then
             # New branch or force push: no previous commit to compare with.
             run=true
-          elif git diff --name-only "$BEFORE" HEAD | grep -qx ".github/workflows/grader-debug-apk.yml"; then
+          elif git diff --name-only "$BEFORE" HEAD | grep -qE '^(lib/|android/|packages/|pubspec\.(yaml|lock)$|\.github/workflows/grader-debug-apk\.yml$)'; then
             run=true
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
