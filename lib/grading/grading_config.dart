@@ -105,8 +105,16 @@ abstract final class GradingConfig {
   /// At least this fraction of points inside the label: a filled bubble.
   static const fillMinFraction = 0.3;
 
-  /// A tick may be at most this far (horizontally) from the label.
-  static const double tickMaxDistance = 40;
+  /// A tick this close (horizontally) to the label or option text scores
+  /// full marks ...
+  static const double tickNearDistance = 25;
+
+  /// ... and scores less the further away it is, down to nothing at this
+  /// distance.
+  static const double tickMaxDistance = 50;
+
+  /// Score of a tick at its best (a ring or a filled bubble scores up to 1).
+  static const tickScore = 0.85;
 
   /// A compact mark (tick, bubble) is at most this large in either direction.
   static const double compactMaxSize = 120;

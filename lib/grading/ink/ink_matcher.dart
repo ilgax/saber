@@ -245,9 +245,20 @@ abstract final class InkMatcher {
         max(ink.bounds.top, o.labelRect.top);
     if (band <= 0) return 0;
     final onLine = (band / o.labelRect.height).clamp(0.0, 1.0);
-    final gap = min(_gapX(ink.bounds, o.labelRect), _gapX(ink.bounds, o.box));
-    final proximity = max(0.0, 1 - gap / GradingConfig.tickMaxDistance);
-    return onLine * proximity;
+    // Distance to the label, or 0 when the mark overlaps the option's text.
+    final gap = ink.bounds.overlaps(o.box)
+        ? 0.0
+        : _gapX(ink.bounds, o.labelRect);
+    final proximity = gap <= GradingConfig.tickNearDistance
+        ? 1.0
+        : max(
+            0.0,
+            1 -
+                (gap - GradingConfig.tickNearDistance) /
+                    (GradingConfig.tickMaxDistance -
+                        GradingConfig.tickNearDistance),
+          );
+    return GradingConfig.tickScore * onLine * proximity;
   }
 
   static double _gapX(Rect a, Rect b) =>
