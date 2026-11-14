@@ -162,6 +162,13 @@ dependencies:
   dynamic_yaru: ^0.3.0
   image: 4.10.2  # 4.11.0 has a broken version constraint for `archive`
   pool: ^1.5.2
+  google_mlkit_text_recognition: ^1.0.3
+  # Used by lib/grading/ink/pdf_annotations.dart (bindings and allocators for
+  # reading PDF annotations). Already in the lockfile through pdfrx_engine;
+  # pinned to the locked versions, so the lock only changes "transitive" to
+  # "direct main".
+  pdfium_dart: 0.4.2
+  ffi: 2.2.0
 
 dev_dependencies:
   flutter_test:
