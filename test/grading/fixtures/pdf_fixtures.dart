@@ -16,10 +16,11 @@ import 'package:saber/grading/models.dart';
 
 /// A piece of text at an absolute position (points from the top-left).
 class Fx {
-  const new(this.text, this.x, this.y);
+  const new(this.text, this.x, this.y, {this.size = 12});
 
   final String text;
   final double x, y;
+  final double size;
 }
 
 class FxPage {
@@ -181,7 +182,7 @@ Future<Uint8List> buildPdf(List<FxPage> pages) async {
             pw.Positioned(
               left: t.x,
               top: t.y,
-              child: pw.Text(t.text, style: const pw.TextStyle(fontSize: 12)),
+              child: pw.Text(t.text, style: pw.TextStyle(fontSize: t.size)),
             ),
         ],
       ),

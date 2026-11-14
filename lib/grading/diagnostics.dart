@@ -36,8 +36,9 @@ List<String> suspiciousFindings(
       );
     }
     // Compare with the key block of the same index, paired or not.
-    if (t < detection.blocks.length) {
-      final answers = detection.blocks[t].answers;
+    final blocks = analysis.pairedBlocks ?? detection.blocks;
+    if (t < blocks.length) {
+      final answers = blocks[t].answers;
       final qn = numbers.toSet();
       final noQuestion = answers.keys.where((n) => !qn.contains(n)).toList()
         ..sort();

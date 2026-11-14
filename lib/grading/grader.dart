@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:ui';
 
 import 'package:saber/grading/compare/answer_comparer.dart';
@@ -9,6 +10,7 @@ import 'package:saber/grading/key/key_page_detector.dart';
 import 'package:saber/grading/layout/question_locator.dart';
 import 'package:saber/grading/layout/text_extractor.dart';
 import 'package:saber/grading/models.dart';
+import 'package:saber/grading/ocr/ocr_engine.dart';
 
 export 'package:saber/grading/key/key_page_detector.dart' show KeyOverride;
 
@@ -19,6 +21,7 @@ class GradingPage {
     required this.text,
     required this.noteSize,
     required this.strokes,
+    this.ocrStatus = OcrStatus.notNeeded,
   });
 
   /// Index of the page in the note.
@@ -30,8 +33,13 @@ class GradingPage {
   /// Size of the note page the PDF is drawn on and the strokes live in.
   final Size noteSize;
 
-  /// All strokes of the page, in note coordinates.
+  /// All strokes of the page, in note coordinates: the note's own strokes
+  /// and the PDF's ink annotations ([InkStroke.fromPdf]).
   final List<InkStroke> strokes;
+
+  /// Whether the text of the page came from OCR (see [PageText.source]) or
+  /// why not although the text layer was too thin.
+  final OcrStatus ocrStatus;
 }
 
 /// What the grader found in a document before any ink is read: the key, the
@@ -44,6 +52,7 @@ class DocumentAnalysis {
     required this.tests,
     required this.pairedBlocks,
     required this.pairingProblem,
+    this.footerKeyPages = const {},
   });
 
   /// The key as detected (or overridden), before pairing.
@@ -61,6 +70,10 @@ class DocumentAnalysis {
 
   /// Why [pairedBlocks] is null, in words; null when paired.
   final String? pairingProblem;
+
+  /// Question pages that hold the key as a line (`1. D 2. A ...`), see
+  /// [KeyBlock.samePage].
+  final Set<int> footerKeyPages;
 }
 
 /// Finds the key, locates the questions and pairs tests with key blocks.
@@ -73,6 +86,7 @@ DocumentAnalysis analyzeDocument(
     for (final p in sorted) p.pageIndex: p.text,
   }, override: keyOverride);
   final keyPages = detection.keyPages;
+  final footerPages = detection.footerPages;
 
   // Locate questions on all non-key pages and split them into tests: the
   // numbering restarts at 1 for each test.
@@ -108,8 +122,12 @@ DocumentAnalysis analyzeDocument(
 
   for (final page in sorted) {
     if (keyPages.contains(page.pageIndex)) continue;
+    // A key line in the footer of a question page is not question text.
+    final footer = footerPages.contains(page.pageIndex)
+        ? KeyPageDetector.footerKey(page.pageIndex, page.text)
+        : null;
     final layout = QuestionLocator.locatePage(
-      page.text,
+      footer?.stripped ?? page.text,
       pageIndex: page.pageIndex,
     );
     final found = [...layout.questions];
@@ -140,6 +158,8 @@ DocumentAnalysis analyzeDocument(
 
   final (blocks, problem) = byRange
       ? _pairExplicit(tests, detection)
+      : footerPages.isNotEmpty
+      ? _pairFooter(tests, located, detection)
       : _pair(tests, detection);
   return DocumentAnalysis(
     detection: detection,
@@ -147,6 +167,7 @@ DocumentAnalysis analyzeDocument(
     tests: tests,
     pairedBlocks: blocks,
     pairingProblem: problem,
+    footerKeyPages: footerPages,
   );
 }
 
@@ -189,6 +210,28 @@ class PageInk {
   /// The page's questions in note coordinates, in the order the
   /// classifications' question indices refer to.
   final List<Question> questions;
+
+  /// Counts of the page's own strokes, or with [fromPdf] of the PDF's ink
+  /// annotations: total, gradable, ignored (not gradable) and unassigned
+  /// (gradable but near no question).
+  ({int total, int gradable, int ignored, int unassigned}) counts({
+    required bool fromPdf,
+  }) {
+    var total = 0, gradable = 0, unassigned = 0;
+    for (var i = 0; i < strokes.length; i++) {
+      if (strokes[i].fromPdf != fromPdf) continue;
+      total++;
+      if (!GradingConfig.gradableTools.contains(strokes[i].toolId)) continue;
+      gradable++;
+      if (classes[i].questionIndex == null) unassigned++;
+    }
+    return (
+      total: total,
+      gradable: gradable,
+      ignored: total - gradable,
+      unassigned: unassigned,
+    );
+  }
 
   int get gradable => strokes
       .where((s) => GradingConfig.gradableTools.contains(s.toolId))
@@ -327,6 +370,77 @@ GradingOutcome gradeDetailed(
     return (null, 'a chosen key block has no readable entries');
   }
   return (detection.blocks, null);
+}
+
+/// Pairs the key lines on question pages with the tests: a key line belongs
+/// to the test of the questions on its page (the k-th key line of a page to
+/// the k-th test that has questions there); a page without questions belongs
+/// to the test of the closest questions before it. Key lines of one test
+/// (a test over several pages with a key line each) are merged. Returns the
+/// blocks in test order.
+(List<KeyBlock>?, String?) _pairFooter(
+  List<List<Question>> tests,
+  Map<int, List<Question>> located,
+  KeyDetection detection,
+) {
+  if (tests.isEmpty) return (null, 'no questions located');
+  final pagesWithQuestions = [
+    for (final e in located.entries)
+      if (e.value.isNotEmpty) e.key,
+  ]..sort();
+  final byTest = <int, KeyBlock>{};
+  final seenOnPage = <int, int>{};
+  for (final block in detection.blocks) {
+    final page = block.firstKeyPage;
+    final here = <int>[];
+    for (final q in located[page] ?? const <Question>[]) {
+      if (!here.contains(q.testIndex)) here.add(q.testIndex);
+    }
+    final nth = seenOnPage[page] = (seenOnPage[page] ?? -1) + 1;
+    int? test;
+    if (here.isNotEmpty) {
+      test = here[nth < here.length ? nth : here.length - 1];
+    } else {
+      final before = pagesWithQuestions.where((p) => p < page).lastOrNull;
+      if (before != null) test = located[before]!.last.testIndex;
+    }
+    if (test == null) {
+      return (
+        null,
+        'the key line on page ${page + 1} has no questions before it',
+      );
+    }
+    final merged = byTest[test];
+    if (merged == null) {
+      byTest[test] = block;
+    } else {
+      byTest[test] = KeyBlock(
+        firstKeyPage: min(merged.firstKeyPage, block.firstKeyPage),
+        lastKeyPage: max(merged.lastKeyPage, block.lastKeyPage),
+        answers: {...block.answers, ...merged.answers},
+        samePage: true,
+      );
+    }
+  }
+  final result = <KeyBlock>[];
+  for (var i = 0; i < tests.length; i++) {
+    final block = byTest[i];
+    if (block == null) {
+      return (null, 'test ${i + 1} has no key line on its pages');
+    }
+    final numbers = {for (final q in tests[i]) q.number};
+    final covered = numbers.where(block.answers.containsKey).length;
+    if (covered < GradingConfig.keyMinQuestionCoverage * numbers.length) {
+      return (
+        null,
+        'low coverage: the key line of test ${i + 1} has entries for only '
+            '$covered of ${numbers.length} questions',
+      );
+    }
+    final pages = tests[i].map((q) => q.pageIndex);
+    result.add(block.withQuestionPages(pages.reduce(min), pages.reduce(max)));
+  }
+  return (result, null);
 }
 
 /// Pairs test i with key block i (both in document order). Returns the blocks

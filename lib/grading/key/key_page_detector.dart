@@ -248,7 +248,11 @@ abstract final class KeyPageDetector {
             : s.isKeyPage)
           s,
     ];
-    if (keyStats.isEmpty) return const KeyDetection.unknown();
+    if (keyStats.isEmpty) {
+      return override == null
+          ? _footerDetection(indices, pages)
+          : const KeyDetection.unknown();
+    }
 
     final blocks = _splitBlocks(keyStats);
     if (blocks.isEmpty) return const KeyDetection.unknown();
@@ -260,6 +264,115 @@ abstract final class KeyPageDetector {
         ? KeyStatus.found
         : KeyStatus.unknown;
     return KeyDetection(blocks: blocks, confidence: confidence, status: status);
+  }
+
+  /// The key line(s) of a question page: lines in which at least
+  /// [GradingConfig.footerKeyLineCoverage] of the tokens are `number letter`
+  /// entries (a page number beside the key does not matter), with at least two
+  /// entries. Null unless the entries hold a run of
+  /// [GradingConfig.keyMinConsecutiveRun] consecutive numbers.
+  ///
+  /// Also returns [text] without the tokens of those entries, to locate the
+  /// questions on: `1. D` must not be read as question 1 with an option D.
+  static ({List<KeyEntry> entries, PageText stripped})? footerKey(
+    int pageIndex,
+    PageText text,
+  ) {
+    final entries = <KeyEntry>[];
+    final removed = <TextToken>{};
+    for (final line in text.lines) {
+      final lineText = line.text;
+      final matches = KeyParser.entryPattern.allMatches(lineText).toList();
+      if (matches.length < 2) continue;
+      final c = KeyParser.coverage(lineText);
+      if (c.matched < GradingConfig.footerKeyLineCoverage * c.total) continue;
+      var offset = 0;
+      final spans = <(TextToken, int, int)>[];
+      for (final t in line.tokens) {
+        spans.add((t, offset, offset + t.text.length));
+        offset += t.text.length + 1;
+      }
+      for (final m in matches) {
+        Rect? rect;
+        for (final (token, start, end) in spans) {
+          if (start < m.end && m.start < end) {
+            removed.add(token);
+            rect = rect == null ? token.rect : rect.expandToInclude(token.rect);
+          }
+        }
+        entries.add(
+          KeyEntry(
+            number: int.parse(m.group(1)!),
+            letter: m.group(2)!.toUpperCase(),
+            pageIndex: pageIndex,
+            rect: rect,
+          ),
+        );
+      }
+    }
+    final numbers = {for (final e in entries) e.number};
+    var longest = 0, run = 0;
+    for (final n in (numbers.toList()..sort())) {
+      run = numbers.contains(n - 1) ? run + 1 : 1;
+      longest = max(longest, run);
+    }
+    if (longest < GradingConfig.keyMinConsecutiveRun) return null;
+    return (entries: entries, stripped: _without(text, removed));
+  }
+
+  /// [text] without [removed] tokens (of its own token list).
+  static PageText _without(PageText text, Set<TextToken> removed) {
+    final buffer = StringBuffer();
+    final rects = <Rect>[];
+    for (final t in text.tokens) {
+      if (removed.contains(t)) continue;
+      buffer.write('${t.text} ');
+      rects
+        ..addAll(t.charRects)
+        ..add(Rect.zero);
+    }
+    return PageText(
+      pageIndex: text.pageIndex,
+      pdfSize: text.pdfSize,
+      rotation: text.rotation,
+      source: text.source,
+      fullText: buffer.toString(),
+      charRects: rects,
+    );
+  }
+
+  /// Key lines on question pages, one block per page (and per restart of the
+  /// numbering on it), when no page is a key page of its own.
+  static KeyDetection _footerDetection(
+    List<int> indices,
+    Map<int, PageText> pages,
+  ) {
+    final blocks = <KeyBlock>[];
+    for (final i in indices) {
+      final footer = footerKey(i, pages[i]!);
+      if (footer == null) continue;
+      var answers = <int, String>{};
+      void flush() {
+        if (answers.isEmpty) return;
+        blocks.add(
+          KeyBlock(
+            firstKeyPage: i,
+            lastKeyPage: i,
+            answers: answers,
+            samePage: true,
+          ),
+        );
+        answers = {};
+      }
+
+      for (final e in footer.entries) {
+        if (answers.containsKey(e.number)) flush();
+        answers[e.number] = e.letter;
+      }
+      flush();
+    }
+    if (blocks.isEmpty) return const KeyDetection.unknown();
+    return KeyDetection(blocks: blocks, confidence: 1, status: KeyStatus.found);
   }
 
   /// Walks the entries in reading order; a new block starts when the pages
