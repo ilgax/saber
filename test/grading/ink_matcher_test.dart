@@ -275,4 +275,65 @@ void main() {
       expect(r.map((e) => e.letter), ['B', 'C']);
     });
   });
+
+  group('classification', () {
+    final q1 = question(1), q2 = question(2, dy: 260);
+
+    InkKind kindOf(InkStroke s) => InkMatcher.analyze(q1, [s]).kinds.single;
+
+    test('every kind of mark is named', () {
+      expect(kindOf(ink(circleAround(label(q1, 'B')))), InkKind.ring);
+      expect(kindOf(ink(scribbleOn(label(q1, 'B')))), InkKind.fill);
+      expect(kindOf(ink(tickBeside(label(q1, 'B')))), InkKind.tick);
+      expect(kindOf(ink(horizontalLine(box(q1, 'B'), 1.3))), InkKind.underline);
+      expect(kindOf(ink(horizontalLine(box(q1, 'B'), 0.5))), InkKind.strike);
+      final l = label(q1, 'B');
+      expect(
+        kindOf(ink(polyline([l.topLeft, l.bottomRight]))),
+        InkKind.diagonal,
+      );
+      expect(kindOf(ink(tickBeside(label(q1, 'B'), gap: 90))), InkKind.ignored);
+    });
+
+    test('an X turns its diagonals into strikes', () {
+      final x = crossOver(box(q1, 'A'));
+      final d = InkMatcher.analyze(q1, [ink(x[0]), ink(x[1])]);
+      expect(d.kinds, [InkKind.strike, InkKind.strike]);
+      expect(d.crossed, {'A'});
+    });
+
+    test('the reading carries the kind of the deciding stroke', () {
+      final r = read(q1, [ink(circleAround(label(q1, 'C')))]);
+      expect(r.kind, InkKind.ring);
+      expect(read(q1, [ink(tickBeside(label(q1, 'D')))]).kind, InkKind.tick);
+      expect(read(q1, [ink(scribbleOn(label(q1, 'A')))]).kind, InkKind.fill);
+      expect(
+        read(q1, [ink(horizontalLine(box(q1, 'B'), 1.3))]).kind,
+        InkKind.underline,
+      );
+    });
+
+    test('scores are exposed per option', () {
+      final d = InkMatcher.analyze(q1, [ink(circleAround(label(q1, 'B')))]);
+      expect(d.scores['B'], greaterThan(0.8));
+      expect(d.scores['A'], 0);
+    });
+
+    test('classify tells where each stroke went', () {
+      final strokes = [
+        ink(circleAround(label(q1, 'B'))),
+        ink(circleAround(label(q2, 'C'))),
+        ink(circleAround(const Rect.fromLTWH(800, 800, 30, 30))),
+        ink(circleAround(label(q1, 'A')), tool: ToolId.highlighter, size: 20),
+      ];
+      final c = InkMatcher.classify([q1, q2], strokes);
+      expect(c.map((e) => e.questionIndex), [0, 1, null, null]);
+      expect(c.map((e) => e.kind), [
+        InkKind.ring,
+        InkKind.ring,
+        InkKind.ignored,
+        InkKind.ignored,
+      ]);
+    });
+  });
 }

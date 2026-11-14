@@ -275,25 +275,54 @@ enum UnsureReason {
 
 enum Confidence { low, medium, high }
 
+/// What kind of mark the ink matcher took a stroke for.
+enum InkKind {
+  /// Surrounds an option (a circle).
+  ring,
+
+  /// Dense ink on an option label (a filled bubble).
+  fill,
+
+  /// A small mark beside or on an option.
+  tick,
+
+  /// A straight line under an option's text.
+  underline,
+
+  /// A line (or an X) through an option's text: the option is crossed out.
+  strike,
+
+  /// A steep straight line that is not part of an X.
+  diagonal,
+
+  /// Not a mark on any option (or not gradable, or too far away).
+  ignored,
+}
+
 enum MarkState { marked, unsure, unanswered }
 
 /// What the ink matcher read from one question.
 @immutable
 class MarkReading {
-  const new marked(String this.letter, {this.confidence = Confidence.medium})
-    : state = MarkState.marked,
-      reason = null;
+  const new marked(
+    String this.letter, {
+    this.confidence = Confidence.medium,
+    this.kind,
+  }) : state = MarkState.marked,
+       reason = null;
 
   const new unsure(UnsureReason this.reason)
     : letter = null,
       state = MarkState.unsure,
-      confidence = Confidence.low;
+      confidence = Confidence.low,
+      kind = null;
 
   const new unanswered()
     : letter = null,
       state = MarkState.unanswered,
       reason = null,
-      confidence = Confidence.high;
+      confidence = Confidence.high,
+      kind = null;
 
   /// The marked letter; null when unsure or unanswered.
   final String? letter;
@@ -301,16 +330,20 @@ class MarkReading {
   final UnsureReason? reason;
   final Confidence confidence;
 
+  /// The kind of the stroke that decided a marked reading.
+  final InkKind? kind;
+
   @override
   bool operator ==(Object other) =>
       other is MarkReading &&
       other.letter == letter &&
       other.state == state &&
       other.reason == reason &&
-      other.confidence == confidence;
+      other.confidence == confidence &&
+      other.kind == kind;
 
   @override
-  int get hashCode => Object.hash(letter, state, reason, confidence);
+  int get hashCode => Object.hash(letter, state, reason, confidence, kind);
 
   @override
   String toString() => 'MarkReading($letter, $state, $reason)';

@@ -71,24 +71,47 @@ abstract final class InkMatcher {
   }
 
   /// Reads the answer of [question] from the strokes assigned to it.
-  static MarkReading read(Question question, List<InkStroke> strokes) {
-    final inks = [
-      for (final s in strokes)
-        if (GradingConfig.gradableTools.contains(s.toolId) &&
-            s.outline.isNotEmpty)
-          _Prepared(s),
-    ];
-    if (inks.isEmpty) return const MarkReading.unanswered();
+  static MarkReading read(Question question, List<InkStroke> strokes) =>
+      analyze(question, strokes).reading;
+
+  /// Like [read], plus what each of [strokes] was taken for (parallel to
+  /// [strokes]) and the score of every option.
+  static ReadDetail analyze(Question question, List<InkStroke> strokes) {
+    final kinds = List.filled(strokes.length, InkKind.ignored);
+    final inks = <_Prepared>[];
+    final indexOf = <_Prepared, int>{};
+    for (var i = 0; i < strokes.length; i++) {
+      final s = strokes[i];
+      if (GradingConfig.gradableTools.contains(s.toolId) &&
+          s.outline.isNotEmpty) {
+        final p = _Prepared(s);
+        inks.add(p);
+        indexOf[p] = i;
+      }
+    }
+    if (inks.isEmpty) {
+      return ReadDetail(const MarkReading.unanswered(), kinds, const {});
+    }
 
     final marks = {for (final o in question.options) o.letter: 0.0};
+    final markKinds = <String, InkKind>{};
+    void mark(String letter, double score, InkKind kind) {
+      if (score > marks[letter]!) {
+        marks[letter] = score;
+        markKinds[letter] = kind;
+      }
+    }
+
     final crossed = <String>{};
     final diagonals = <String, List<_Prepared>>{};
 
     for (final ink in inks) {
+      final at = indexOf[ink]!;
       if (ink.isLine) {
         if (ink.angle.abs() <= GradingConfig.lineMaxAngleDegrees) {
-          _horizontalLine(ink, question, marks, crossed);
+          kinds[at] = _horizontalLine(ink, question, mark, crossed);
         } else {
+          kinds[at] = InkKind.diagonal;
           _diagonalLine(ink, question, diagonals);
         }
         continue;
@@ -99,53 +122,95 @@ abstract final class InkMatcher {
         if (score > 0) rings[o.letter] = score;
       }
       if (rings.isNotEmpty) {
-        rings.forEach((l, s) => marks[l] = max(marks[l]!, s));
+        rings.forEach((l, s) => mark(l, s, InkKind.ring));
+        kinds[at] = InkKind.ring;
       } else if (max(ink.bounds.width, ink.bounds.height) <=
           GradingConfig.compactMaxSize) {
+        var best = 0.0;
         for (final o in question.options) {
-          marks[o.letter] = max(marks[o.letter]!, _compactScore(ink, o));
+          final score = _compactScore(ink, o);
+          // Only a filled bubble scores a full 1.
+          mark(o.letter, score, score >= 1 ? InkKind.fill : InkKind.tick);
+          best = max(best, score);
         }
+        if (best > 0) kinds[at] = best >= 1 ? InkKind.fill : InkKind.tick;
       }
     }
     diagonals.forEach((letter, list) {
-      if (_formsCross(list)) crossed.add(letter);
+      if (_formsCross(list)) {
+        crossed.add(letter);
+        for (final d in list) {
+          kinds[indexOf[d]!] = InkKind.strike;
+        }
+      }
     });
 
     final candidates = [
       for (final e in marks.entries)
         if (!crossed.contains(e.key)) e,
     ]..sort((a, b) => b.value.compareTo(a.value));
+    MarkReading reading;
     if (candidates.isEmpty ||
         candidates.first.value < GradingConfig.markThreshold) {
-      return MarkReading.unsure(
+      reading = MarkReading.unsure(
         crossed.isEmpty
             ? UnsureReason.noOptionAboveThreshold
             : UnsureReason.crossedOutAmbiguous,
       );
+    } else {
+      final top = candidates.first.value;
+      final second = candidates.length > 1 ? candidates[1].value : 0.0;
+      if (top - second < GradingConfig.decisionMargin) {
+        reading = const MarkReading.unsure(UnsureReason.twoOptionsClose);
+      } else {
+        final confidence =
+            top >= GradingConfig.highConfidenceScore &&
+                top - second >= GradingConfig.highConfidenceMargin
+            ? Confidence.high
+            : Confidence.medium;
+        reading = MarkReading.marked(
+          candidates.first.key,
+          confidence: confidence,
+          kind: markKinds[candidates.first.key],
+        );
+      }
     }
-    final top = candidates.first.value;
-    final second = candidates.length > 1 ? candidates[1].value : 0.0;
-    if (top - second < GradingConfig.decisionMargin) {
-      return const MarkReading.unsure(UnsureReason.twoOptionsClose);
+    return ReadDetail(reading, kinds, marks, crossed: crossed);
+  }
+
+  /// What every stroke of a page was taken for, for diagnostics: which
+  /// question it was assigned to (null if none) and its [InkKind]. Parallel
+  /// to [strokes].
+  static List<StrokeClassification> classify(
+    List<Question> questions,
+    List<InkStroke> strokes,
+  ) {
+    final assigned = assign(questions, strokes);
+    final result = [
+      for (final _ in strokes)
+        const StrokeClassification(null, InkKind.ignored),
+    ];
+    for (var q = 0; q < questions.length; q++) {
+      final detail = analyze(questions[q], assigned[q]);
+      for (var i = 0; i < assigned[q].length; i++) {
+        final original = strokes.indexOf(assigned[q][i]);
+        result[original] = StrokeClassification(q, detail.kinds[i]);
+      }
     }
-    final confidence =
-        top >= GradingConfig.highConfidenceScore &&
-            top - second >= GradingConfig.highConfidenceMargin
-        ? Confidence.high
-        : Confidence.medium;
-    return MarkReading.marked(candidates.first.key, confidence: confidence);
+    return result;
   }
 
   // ---------------------------------------------------------------- lines
 
   /// A roughly horizontal straight stroke: a strike-through when it runs
   /// through the middle of an option's text, an underline below it.
-  static void _horizontalLine(
+  static InkKind _horizontalLine(
     _Prepared ink,
     Question q,
-    Map<String, double> marks,
+    void Function(String, double, InkKind) mark,
     Set<String> crossed,
   ) {
+    var kind = InkKind.ignored;
     for (final o in q.options) {
       final box = o.box;
       final overlap =
@@ -156,15 +221,18 @@ abstract final class InkMatcher {
           t <= GradingConfig.strikeBandBottom) {
         if (overlap / box.width >= GradingConfig.strikeMinCoverage) {
           crossed.add(o.letter);
+          kind = InkKind.strike;
         }
       } else if (t > GradingConfig.strikeBandBottom &&
           t <= GradingConfig.underlineBandBottom) {
         if (overlap / min(box.width, ink.bounds.width) >=
             GradingConfig.strikeMinCoverage) {
-          marks[o.letter] = max(marks[o.letter]!, GradingConfig.underlineScore);
+          mark(o.letter, GradingConfig.underlineScore, InkKind.underline);
+          if (kind != InkKind.strike) kind = InkKind.underline;
         }
       }
     }
+    return kind;
   }
 
   /// A steep straight stroke: remembered per option, two crossing ones make
@@ -273,6 +341,32 @@ abstract final class InkMatcher {
     final dy = max(0.0, max(b.top - a.bottom, a.top - b.bottom));
     return sqrt(dx * dx + dy * dy);
   }
+}
+
+/// What [InkMatcher.analyze] found.
+class ReadDetail {
+  const new(this.reading, this.kinds, this.scores, {this.crossed = const {}});
+
+  final MarkReading reading;
+
+  /// What each input stroke was taken for.
+  final List<InkKind> kinds;
+
+  /// The mark score (0 to 1) of each option letter.
+  final Map<String, double> scores;
+
+  /// Letters of options that were crossed out.
+  final Set<String> crossed;
+}
+
+/// Where a stroke went and what it was taken for.
+class StrokeClassification {
+  const new(this.questionIndex, this.kind);
+
+  /// Index into the page's questions; null when unassigned (stray or not a
+  /// gradable tool).
+  final int? questionIndex;
+  final InkKind kind;
 }
 
 /// A stroke with its resampled outline and line statistics.
