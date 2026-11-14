@@ -113,6 +113,13 @@ abstract final class GradingConfig {
   /// distance.
   static const double tickMaxDistance = 50;
 
+  /// A tick must be at least this large (larger side of the stroke bounds).
+  /// Smaller strokes beside a label are dots (pen rests, taps) and score 0.
+  /// Measured with real strokes: a 1-3 point tap is 2.6, 5.6 and 9.6 units
+  /// for pen sizes 2, 5 and 9; the smallest tick fixture (label 12 high) is
+  /// 12.8.
+  static const double tickMinSize = 11;
+
   /// Score of a tick at its best (a ring or a filled bubble scores up to 1).
   static const tickScore = 0.85;
 

@@ -41,7 +41,7 @@ width).
   `resampleStep` 3, `regionInflate` 24, `strayDistance` 60,
   `ringMinCoverage` 0.8, `ringSectors` 16, `ringMinRadiusFraction` 0.5,
   `ringMaxInnerFraction` 0.15, `labelInflate` 3, `fillMinFraction` 0.3,
-  `tickNearDistance` 25, `tickMaxDistance` 50, `tickScore` 0.85,
+  `tickNearDistance` 25, `tickMaxDistance` 50, `tickMinSize` 11, `tickScore` 0.85,
   `compactMaxSize` 120, `lineMaxElongation` 0.2, `lineMinLength` 20,
   `lineMaxAngleDegrees` 30, `strikeMinCoverage` 0.6,
   `strikeBandTop`/`Bottom` 0.2/0.72, `underlineBandBottom` 1.6,
@@ -104,8 +104,10 @@ objects (in-memory PDF, so the `inline_pdf_<id>.pdf` cache key path; the
   `unsure`). A single-stroke X is read as a mark on the label, not as a
   cross-out; only two crossing diagonal strokes count as an X. A wavy
   strike-through that is not straight is read like a scribble.
-- A half circle or any compact stroke on an option's line near its label counts
-  as a mark on it (medium confidence).
+- A half circle or any compact stroke of at least `tickMinSize` (11 units) on
+  an option's line near its label counts as a mark on it (medium confidence).
+  Smaller strokes (dots, pen rests; 2.6/5.6/9.6 units for pen sizes 2/5/9) beside
+  a label score 0, but a dot directly ON a label still counts as a filled bubble.
 - Column detection needs at least two question numbers per column; a page with
   one question per column is read as one column.
 - Options that wrap onto the following lines are only joined when the next line

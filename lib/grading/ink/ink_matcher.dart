@@ -240,6 +240,10 @@ abstract final class InkMatcher {
     final label = o.labelRect.inflate(GradingConfig.labelInflate);
     final inner = ink.points.where(label.contains).length / ink.points.length;
     if (inner >= GradingConfig.fillMinFraction) return 1;
+    // A dot (pen rest, tap) is not a tick.
+    if (max(ink.bounds.width, ink.bounds.height) < GradingConfig.tickMinSize) {
+      return 0;
+    }
     final band =
         min(ink.bounds.bottom, o.labelRect.bottom) -
         max(ink.bounds.top, o.labelRect.top);

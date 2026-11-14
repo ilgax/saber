@@ -106,6 +106,37 @@ void main() {
       expect(summarize(r), expected({1: 'B/B correct', 2: 'D/C wrong'}));
     });
 
+    test('a lone dot beside a label is never read as a letter', () async {
+      final doc = await singleTest();
+      for (final size in [2.0, 5.0, 9.0]) {
+        final l = doc.labelRect(0, 1, 'A');
+        final dot = Offset(l.left - 12, l.center.dy);
+        final r = grade(doc, {
+          0: [
+            ink([dot, dot + const Offset(0.5, 0)], size: size),
+          ],
+        });
+        expect(
+          summarize(r),
+          expected({1: '-/B unsure(noOptionAboveThreshold)'}),
+          reason: 'pen size $size',
+        );
+      }
+    });
+
+    test('a dot beside A does not disturb a circle on B', () async {
+      final doc = await singleTest();
+      final l = doc.labelRect(0, 1, 'A');
+      final dot = Offset(l.left - 12, l.center.dy);
+      final r = grade(doc, {
+        0: [
+          ink([dot], size: 5),
+          ink(circleAround(doc.labelRect(0, 1, 'B'))),
+        ],
+      });
+      expect(summarize(r), expected({1: 'B/B correct'}));
+    });
+
     test('filled bubble on the label', () async {
       final doc = await singleTest();
       final r = grade(doc, {
