@@ -166,6 +166,7 @@ class KeyBlock {
     required this.answers,
     this.firstQuestionPage,
     this.lastQuestionPage,
+    this.samePage = false,
   });
 
   final int firstKeyPage;
@@ -173,6 +174,10 @@ class KeyBlock {
 
   /// Question number to upper-case letter.
   final Map<int, String> answers;
+
+  /// The key is a line on question pages (`1. D 2. A ...` in a footer), not a
+  /// page of its own: those pages are still question pages.
+  final bool samePage;
 
   /// The question pages of the test this block was paired with (null until
   /// paired).
@@ -185,11 +190,13 @@ class KeyBlock {
     answers: answers,
     firstQuestionPage: first,
     lastQuestionPage: last,
+    samePage: samePage,
   );
 
   @override
   bool operator ==(Object other) =>
       other is KeyBlock &&
+      other.samePage == samePage &&
       other.firstKeyPage == firstKeyPage &&
       other.lastKeyPage == lastKeyPage &&
       mapEquals(other.answers, answers) &&
@@ -203,6 +210,7 @@ class KeyBlock {
     Object.hashAll(answers.entries.map((e) => Object.hash(e.key, e.value))),
     firstQuestionPage,
     lastQuestionPage,
+    samePage,
   );
 
   @override
@@ -232,9 +240,19 @@ class KeyDetection {
   final double confidence;
   final KeyStatus status;
 
+  /// The pages that are key pages of their own (not question pages with a
+  /// key line, see [footerPages]).
   Set<int> get keyPages => {
     for (final b in blocks)
-      for (var p = b.firstKeyPage; p <= b.lastKeyPage; p++) p,
+      if (!b.samePage)
+        for (var p = b.firstKeyPage; p <= b.lastKeyPage; p++) p,
+  };
+
+  /// Question pages that hold a key line.
+  Set<int> get footerPages => {
+    for (final b in blocks)
+      if (b.samePage)
+        for (var p = b.firstKeyPage; p <= b.lastKeyPage; p++) p,
   };
 
   @override
@@ -460,14 +478,22 @@ class GradeResult {
 /// One stroke of ink in note-page coordinates, reduced to what grading needs.
 @immutable
 class InkStroke {
-  new({required this.outline, required this.toolId, Rect? bounds})
-    : bounds = bounds ?? _boundsOf(outline);
+  new({
+    required this.outline,
+    required this.toolId,
+    Rect? bounds,
+    this.fromPdf = false,
+  }) : bounds = bounds ?? _boundsOf(outline);
 
   /// The stroke's outline polygon (a thin loop around the pen path, not the
   /// pen path itself).
   final List<Offset> outline;
   final Rect bounds;
   final ToolId toolId;
+
+  /// The stroke comes from an annotation of the PDF (e.g. ink drawn in
+  /// another app), not from the note.
+  final bool fromPdf;
 
   static Rect _boundsOf(List<Offset> points) {
     if (points.isEmpty) return Rect.zero;

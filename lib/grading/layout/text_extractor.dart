@@ -38,6 +38,16 @@ class TextLine {
   String toString() => 'Line($text)';
 }
 
+/// Where a page's text came from.
+enum TextSource {
+  /// The PDF's own text layer.
+  textLayer,
+
+  /// Optical character recognition of the rendered page (the text layer had
+  /// too little text to be a real page).
+  ocr,
+}
+
 /// The text layer of one PDF page, in PDF visual space (points, top-left
 /// origin, y down, page rotation applied).
 ///
@@ -50,12 +60,14 @@ class PageText {
     required this.fullText,
     required this.charRects,
     this.rotation = 0,
+    this.source = TextSource.textLayer,
   }) : assert(fullText.length == charRects.length);
 
   /// A page without a text layer.
   new empty({required this.pageIndex, required this.pdfSize, this.rotation = 0})
     : fullText = '',
-      charRects = const [];
+      charRects = const [],
+      source = TextSource.textLayer;
 
   /// Index of the page within its PDF document (0-based).
   final int pageIndex;
@@ -70,6 +82,9 @@ class PageText {
   /// The page's rotation in degrees (0, 90, 180, 270); already applied to
   /// every rect.
   final int rotation;
+
+  /// Whether the text is the PDF's text layer or recognized by OCR.
+  final TextSource source;
 
   bool get hasText => tokens.isNotEmpty;
 

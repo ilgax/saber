@@ -43,6 +43,25 @@ abstract final class GradingConfig {
   /// height) that is not a label or number continues that option's text.
   static const optionContinuationGapFraction = 0.8;
 
+  // ------------------------------------------------------------------- ocr
+
+  /// A page whose text layer has fewer non-space characters than this is not
+  /// a real text page and is recognized with OCR. Reasoning: a page of
+  /// questions has several hundred characters (a generated six question page
+  /// about 500); a page that is a scanned or exported image typically keeps
+  /// only a watermark or a footer (a 41 character watermark was measured on a
+  /// real test). 120 sits well between the two. A page that already yields
+  /// questions or a key from its text layer is never recognized.
+  static const ocrMinTextLayerChars = 120;
+
+  /// Pages are rendered at this multiple of their size in points (72 dpi) for
+  /// OCR, so the small print of a footer key (about 6 pt) is still about 18
+  /// pixels high.
+  static const ocrRenderScale = 3.0;
+
+  /// The OCR render is scaled down so that it has at most this many pixels.
+  static const ocrMaxPixels = 12000000;
+
   // ------------------------------------------------------------------- key
 
   /// A key page needs a run of at least this many consecutive question
@@ -61,6 +80,11 @@ abstract final class GradingConfig {
   /// in the key block paired with it, otherwise the pairing is rejected.
   static const keyMinQuestionCoverage = 0.5;
 
+  /// A line is a key line when at least this fraction of its tokens belong to
+  /// `number letter` entries (so a page number beside the key does not hide
+  /// it) and it holds at least two entries.
+  static const footerKeyLineCoverage = 0.8;
+
   // ------------------------------------------------------------------- ink
 
   /// Only strokes drawn with these tools are graded. The highlighter is
@@ -71,6 +95,19 @@ abstract final class GradingConfig {
     ToolId.pencil,
     ToolId.shapePen,
   };
+
+  /// PDF annotations (Ink, Polygon, ...) with a lower opacity (/CA) than this
+  /// are highlighter strokes and ignored, like Saber's highlighter. Flexcil's
+  /// translucent pens are around 0.3 to 0.5, ink pens 1.0.
+  static const annotationMinOpacity = 0.9;
+
+  /// Width in PDF points assumed for an annotation without a readable border
+  /// width.
+  static const double annotationDefaultWidthPts = 1;
+
+  /// The thin outline made from an annotation's centre line is at least this
+  /// wide (note units): Saber's thinnest pen outline is about this.
+  static const annotationMinOutlineWidth = 1.5;
 
   /// Stroke outlines are resampled so that no two neighbouring points are
   /// further apart than this.
@@ -179,6 +216,13 @@ abstract final class GradingConfig {
     'keyMinCoverage': keyMinCoverage,
     'keyAcceptConfidence': keyAcceptConfidence,
     'keyMinQuestionCoverage': keyMinQuestionCoverage,
+    'footerKeyLineCoverage': footerKeyLineCoverage,
+    'ocrMinTextLayerChars': ocrMinTextLayerChars,
+    'ocrRenderScale': ocrRenderScale,
+    'ocrMaxPixels': ocrMaxPixels,
+    'annotationMinOpacity': annotationMinOpacity,
+    'annotationDefaultWidthPts': annotationDefaultWidthPts,
+    'annotationMinOutlineWidth': annotationMinOutlineWidth,
     'gradableTools': gradableTools,
     'resampleStep': resampleStep,
     'regionInflate': regionInflate,
