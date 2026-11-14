@@ -53,7 +53,10 @@ GradeResult gradeDocument(List<GradingPage> pages, {KeyOverride? keyOverride}) {
   for (final page in sorted) {
     if (keyPages.contains(page.pageIndex)) continue;
     final questions = <Question>[];
-    for (final q in QuestionLocator.locate(page.text)) {
+    for (final q in QuestionLocator.locate(
+      page.text,
+      pageIndex: page.pageIndex,
+    )) {
       if (previous == null || (q.number == 1 && previous >= 1)) {
         if (previous != null || tests.isEmpty) tests.add([]);
       }

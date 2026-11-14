@@ -49,13 +49,16 @@ abstract final class QuestionLocator {
   /// Only questions with at least [GradingConfig.minOptionsPerQuestion]
   /// options (A, B, ... in sequence) are returned; other numbered text is
   /// not a question.
-  static List<Question> locate(PageText page) {
+  ///
+  /// [pageIndex] is stored in the questions (the note's page index); it
+  /// defaults to the page's index in its PDF.
+  static List<Question> locate(PageText page, {int? pageIndex}) {
     if (!page.hasText) return const [];
     final questions = <Question>[];
     final columns = _splitColumns(page);
     for (final column in columns) {
       for (final draft in _draftQuestions(buildLines(column))) {
-        final q = _finish(draft, page.pageIndex);
+        final q = _finish(draft, pageIndex ?? page.pageIndex);
         if (q != null) questions.add(q);
       }
     }
